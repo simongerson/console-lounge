@@ -1,5 +1,5 @@
 // app/api/auth/login/route.js
-import { query } from '@/lib/db'
+import { query } from '@/lib/mysqldb'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import { cookies } from 'next/headers'

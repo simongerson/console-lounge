@@ -1,98 +1,140 @@
-import { query } from '@/lib/mysqldb'
+import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
+
+// Initialize Supabase admin client
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+)
 
 export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url)
-    const date = searchParams.get('date') ||
-      new Date().toISOString().split('T')[0]
+    const date = searchParams.get('date') || new Date().toISOString().split('T')[0]
 
-    // Today's sessions
-    const sessions = await query(
-      `SELECT gs.*, c.name as console_name, c.console_type,
-              s.name as staff_name, sr.name as rate_name
-       FROM game_sessions gs
-       LEFT JOIN consoles c ON c.id = gs.console_id
-       LEFT JOIN staff s    ON s.id = gs.staff_id
-       LEFT JOIN session_rates sr ON sr.id = gs.rate_id
-       WHERE DATE(gs.started_at) = ?
-       ORDER BY gs.started_at DESC`,
-      [date]
-    )
+    // Create timestamp bounds for PostgreSQL (Start and End of the target date)
+    const startOfDay = `${date} 00:00:00`
+    const endOfDay = `${date} 23:59:59`
 
-    // Revenue summary
-    const revenue = await query(
-      `SELECT
-         COUNT(*) as total_sessions,
-         SUM(CASE WHEN status = 'completed' THEN amount ELSE 0 END) as total_revenue,
-         SUM(CASE WHEN status = 'completed' AND payment_method = 'cash'
-               THEN amount ELSE 0 END) as cash_revenue,
-         SUM(CASE WHEN status = 'completed' AND payment_method = 'mpesa'
-               THEN amount ELSE 0 END) as mpesa_revenue,
-         SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active_sessions
-       FROM game_sessions
-       WHERE DATE(started_at) = ?`,
-      [date]
-    )
+    // Get Yesterday's bounds
+    const yesterdayDate = new Date(date)
+    yesterdayDate.setDate(yesterdayDate.getDate() - 1)
+    const yesterdayStr = yesterdayDate.toISOString().split('T')[0]
+    const yesterdayStart = `${yesterdayStr} 00:00:00`
+    const yesterdayEnd = `${yesterdayStr} 23:59:59`
 
-    // Expenses today
-    const expenses = await query(
-      `SELECT SUM(amount) as total FROM expenses WHERE expense_date = ?`,
-      [date]
-    )
+    // 1. Fetch Today's Sessions (with joined table data)
+    const { data: rawSessions, error: sessionsError } = await supabase
+      .from('game_sessions')
+      .select(`
+        *,
+        consoles (name, console_type),
+        staff (name),
+        session_rates (name)
+      `)
+      .gte('started_at', startOfDay)
+      .lte('started_at', endOfDay)
+      .order('started_at', { ascending: false })
 
-    // Console status
-    const consoles = await query(
-      `SELECT c.*,
-         gs.id as session_id, gs.started_at,
-         gs.amount as session_amount, gs.customer_name,
-         sr.name as rate_name, s.name as staff_name
-       FROM consoles c
-       LEFT JOIN game_sessions gs
-         ON gs.console_id = c.id AND gs.status = 'active'
-       LEFT JOIN session_rates sr ON sr.id = gs.rate_id
-       LEFT JOIN staff s ON s.id = gs.staff_id
-       WHERE c.is_active = 1
-       ORDER BY c.sort_order ASC`
-    )
+    if (sessionsError) throw sessionsError;
 
-    // Active shifts
-    const shifts = await query(
-      `SELECT sh.*, s.name as staff_name
-       FROM shifts sh
-       JOIN staff s ON s.id = sh.staff_id
-       WHERE sh.closed_at IS NULL
-       ORDER BY sh.opened_at DESC`
-    )
+    // 2. Calculate Revenue Summary in JavaScript (replaces complex SQL SUM cases)
+    let totalRevenue = 0, cashRevenue = 0, mpesaRevenue = 0, activeSessions = 0
+    const sessions = (rawSessions || []).map(s => {
+      // Tally up revenue while formatting
+      if (s.status === 'completed') {
+        const amt = Number(s.amount || 0)
+        totalRevenue += amt
+        if (s.payment_method === 'cash') cashRevenue += amt
+        if (s.payment_method === 'mpesa') mpesaRevenue += amt
+      }
+      if (s.status === 'active') activeSessions++
 
-    // Yesterday revenue for comparison
-    const yesterday = await query(
-      `SELECT SUM(amount) as total FROM game_sessions
-       WHERE DATE(started_at) = DATE_SUB(?, INTERVAL 1 DAY)
-       AND status = 'completed'`,
-      [date]
-    )
+      // Format to match the old MySQL flat structure expected by the frontend
+      return {
+        ...s,
+        console_name: s.consoles?.name,
+        console_type: s.consoles?.console_type,
+        staff_name: s.staff?.name,
+        rate_name: s.session_rates?.name
+      }
+    })
 
-    const rev = revenue[0] || {}
-    const totalRevenue    = Number(rev.total_revenue   || 0)
-    const totalExpenses   = Number(expenses[0]?.total  || 0)
-    const yesterdayRev    = Number(yesterday[0]?.total || 0)
+    // 3. Fetch Today's Expenses
+    const { data: expensesData } = await supabase
+      .from('expenses')
+      .select('amount')
+      .eq('expense_date', date)
+    
+    const totalExpenses = (expensesData || []).reduce((sum, exp) => sum + Number(exp.amount || 0), 0)
 
+    // 4. Fetch Active Consoles and any currently active sessions
+    const { data: consolesData } = await supabase
+      .from('consoles')
+      .select('*')
+      .eq('is_active', true)
+      .order('sort_order', { ascending: true })
+
+    const { data: allActiveSessions } = await supabase
+      .from('game_sessions')
+      .select(`
+        id, started_at, amount, customer_name, console_id,
+        session_rates (name), staff (name)
+      `)
+      .eq('status', 'active')
+
+    // Attach active sessions to their respective consoles
+    const consoles = (consolesData || []).map(c => {
+      const activeSess = (allActiveSessions || []).find(s => s.console_id === c.id)
+      return {
+        ...c,
+        session_id: activeSess?.id || null,
+        started_at: activeSess?.started_at || null,
+        session_amount: activeSess?.amount || null,
+        customer_name: activeSess?.customer_name || null,
+        rate_name: activeSess?.session_rates?.name || null,
+        staff_name: activeSess?.staff?.name || null
+      }
+    })
+
+    // 5. Fetch Active Shifts
+    const { data: rawShifts } = await supabase
+      .from('shifts')
+      .select('*, staff (name)')
+      .is('closed_at', null)
+      .order('opened_at', { ascending: false })
+
+    const shifts = (rawShifts || []).map(sh => ({
+      ...sh,
+      staff_name: sh.staff?.name
+    }))
+
+    // 6. Fetch Yesterday's Revenue
+    const { data: yesterdayData } = await supabase
+      .from('game_sessions')
+      .select('amount')
+      .eq('status', 'completed')
+      .gte('started_at', yesterdayStart)
+      .lte('started_at', yesterdayEnd)
+
+    const yesterdayRev = (yesterdayData || []).reduce((sum, sess) => sum + Number(sess.amount || 0), 0)
+
+    // Return the exact same JSON structure the frontend expects
     return NextResponse.json({
       date,
       revenue: {
-        total:       totalRevenue,
-        cash:        Number(rev.cash_revenue  || 0),
-        mpesa:       Number(rev.mpesa_revenue || 0),
-        profit:      totalRevenue - totalExpenses,
-        expenses:    totalExpenses,
-        sessions:    Number(rev.total_sessions  || 0),
-        activeSessions: Number(rev.active_sessions || 0),
-        yesterday:   yesterdayRev,
+        total: totalRevenue,
+        cash: cashRevenue,
+        mpesa: mpesaRevenue,
+        profit: totalRevenue - totalExpenses,
+        expenses: totalExpenses,
+        sessions: sessions.length,
+        activeSessions,
+        yesterday: yesterdayRev,
       },
       consoles,
       shifts,
-      sessions: sessions.slice(0, 20),
+      sessions: sessions.slice(0, 20), // Send only 20 most recent sessions for the dashboard view
     })
 
   } catch (err) {

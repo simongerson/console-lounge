@@ -1,4 +1,3 @@
-// app/api/auth/logout/route.js
 import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
 

@@ -1,6 +1,11 @@
-import { query } from '@/lib/mysqldb'
+import { createClient } from '@supabase/supabase-js'
 import bcrypt from 'bcryptjs'
 import { NextResponse } from 'next/server'
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+)
 
 const MAX_ATTEMPTS    = 5
 const LOCKOUT_MINUTES = 15
@@ -12,11 +17,16 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Invalid PIN' }, { status: 400 })
     }
 
-    const staffList = await query('SELECT * FROM staff WHERE is_active = 1')
-    if (!staffList || staffList.length === 0) {
+    const { data: staffList } = await supabase
+      .from('staff')
+      .select('*')
+      .eq('is_active', true)
+
+    if (!staffList?.length) {
       return NextResponse.json({ error: 'No staff found' }, { status: 404 })
     }
 
+    // Check lockout
     for (const s of staffList) {
       if (s.locked_until && new Date(s.locked_until) > new Date()) {
         return NextResponse.json({
@@ -25,6 +35,7 @@ export async function POST(request) {
       }
     }
 
+    // Match PIN
     let matched = null
     for (const s of staffList) {
       let valid = false
@@ -41,29 +52,26 @@ export async function POST(request) {
       if (newAttempts >= MAX_ATTEMPTS) {
         const lockout = new Date()
         lockout.setMinutes(lockout.getMinutes() + LOCKOUT_MINUTES)
-        const lockoutStr = lockout.toISOString().slice(0, 19).replace('T', ' ')
-        await query(
-          'UPDATE staff SET pin_attempts = ?, locked_until = ? WHERE is_active = 1',
-          [newAttempts, lockoutStr]
-        )
+        await supabase.from('staff')
+          .update({ pin_attempts: newAttempts, locked_until: lockout.toISOString() })
+          .eq('is_active', true)
         return NextResponse.json({
           error: `Locked for ${LOCKOUT_MINUTES} minutes`,
-          locked: true, lockedUntil: lockoutStr,
+          locked: true, lockedUntil: lockout.toISOString(),
         }, { status: 403 })
       }
-      await query(
-        'UPDATE staff SET pin_attempts = ? WHERE is_active = 1',
-        [newAttempts]
-      )
+      await supabase.from('staff')
+        .update({ pin_attempts: newAttempts })
+        .eq('is_active', true)
       return NextResponse.json({
         error: 'Wrong PIN', attemptsLeft: MAX_ATTEMPTS - newAttempts,
       }, { status: 401 })
     }
 
-    await query(
-      'UPDATE staff SET pin_attempts = 0, locked_until = NULL WHERE id = ?',
-      [matched.id]
-    )
+    // Reset attempts
+    await supabase.from('staff')
+      .update({ pin_attempts: 0, locked_until: null })
+      .eq('id', matched.id)
 
     const token = `${matched.id}_${Date.now()}_${Math.random().toString(36).slice(2)}`
 
@@ -71,7 +79,6 @@ export async function POST(request) {
       success: true, token,
       staff: { id: matched.id, name: matched.name, role: matched.role },
     })
-
   } catch (err) {
     console.error('PIN error:', err)
     return NextResponse.json({ error: 'Server error' }, { status: 500 })

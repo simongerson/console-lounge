@@ -38,21 +38,12 @@ export default function LoginPage() {
   }
 
   return (
-    <div
-      className="min-h-screen flex items-center justify-center relative"
-      style={{
-        backgroundImage: "url('/bg.png')",
-        backgroundSize: 'cover',
-        backgroundPosition: 'center',
-        backgroundRepeat: 'no-repeat',
-      }}
-    >
-      {/* Dark overlay */}
-      <div className="absolute inset-0" style={{ background: 'rgba(0,0,0,0.55)' }} />
+    <div className="min-h-screen flex items-center justify-center"
+      style={{ background: '#0a0a0a' }}>
 
-      {/* Teal grid on top of overlay */}
+      {/* Grid background */}
       <div className="absolute inset-0" style={{
-        backgroundImage: 'linear-gradient(rgba(13,148,136,0.07) 1px, transparent 1px), linear-gradient(90deg, rgba(13,148,136,0.07) 1px, transparent 1px)',
+        backgroundImage: 'linear-gradient(rgba(13,148,136,0.08) 1px, transparent 1px), linear-gradient(90deg, rgba(13,148,136,0.08) 1px, transparent 1px)',
         backgroundSize: '40px 40px',
       }} />
 
@@ -60,7 +51,8 @@ export default function LoginPage() {
 
         {/* Brand */}
         <div className="text-center mb-8">
-          <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4"
+          <div className="w-16 h-16 rounded-2xl flex items-center
+            justify-center mx-auto mb-4"
             style={{ background: 'linear-gradient(135deg, #0d9488, #0f766e)' }}>
             <svg className="w-9 h-9" fill="white" viewBox="0 0 24 24">
               <path d="M7 10h2v2H7v2H5v-2H3v-2h2V8h2v2zm11.5 1a1.5 1.5 0 1 1
@@ -72,20 +64,17 @@ export default function LoginPage() {
           <h1 style={{ color: '#fff', fontSize: '24px', fontWeight: 700, margin: 0 }}>
             Console Lounge
           </h1>
-          <p style={{ color: 'rgba(255,255,255,0.5)', fontSize: '13px', marginTop: '4px' }}>
+          <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '13px', marginTop: '4px' }}>
             Manager Dashboard
           </p>
         </div>
 
         {/* Card */}
         <div style={{
-          background: 'rgba(10,10,20,0.7)',
-          backdropFilter: 'blur(16px)',
-          WebkitBackdropFilter: 'blur(16px)',
-          border: '1px solid rgba(13,148,136,0.3)',
+          background: 'rgba(255,255,255,0.05)',
+          border: '1px solid rgba(13,148,136,0.2)',
           borderRadius: '20px',
           padding: '32px 28px',
-          boxShadow: '0 8px 40px rgba(0,0,0,0.5)',
         }}>
           <h2 style={{ color: '#fff', fontSize: '18px', fontWeight: 600, margin: '0 0 4px' }}>
             Owner Login
@@ -109,12 +98,12 @@ export default function LoginPage() {
                 required placeholder="you@email.com"
                 style={{
                   width: '100%', boxSizing: 'border-box',
-                  background: 'rgba(255,255,255,0.07)',
+                  background: 'rgba(255,255,255,0.06)',
                   border: '1px solid rgba(255,255,255,0.1)',
                   borderRadius: '10px', padding: '12px 14px',
                   color: '#fff', fontSize: '14px', outline: 'none',
                 }}
-                onFocus={e => e.target.style.border = '1px solid rgba(13,148,136,0.8)'}
+                onFocus={e => e.target.style.border = '1px solid rgba(13,148,136,0.7)'}
                 onBlur={e => e.target.style.border = '1px solid rgba(255,255,255,0.1)'}
               />
             </div>
@@ -133,12 +122,12 @@ export default function LoginPage() {
                 required placeholder="••••••••"
                 style={{
                   width: '100%', boxSizing: 'border-box',
-                  background: 'rgba(255,255,255,0.07)',
+                  background: 'rgba(255,255,255,0.06)',
                   border: '1px solid rgba(255,255,255,0.1)',
                   borderRadius: '10px', padding: '12px 14px',
                   color: '#fff', fontSize: '14px', outline: 'none',
                 }}
-                onFocus={e => e.target.style.border = '1px solid rgba(13,148,136,0.8)'}
+                onFocus={e => e.target.style.border = '1px solid rgba(13,148,136,0.7)'}
                 onBlur={e => e.target.style.border = '1px solid rgba(255,255,255,0.1)'}
               />
             </div>
@@ -147,7 +136,7 @@ export default function LoginPage() {
             {error && (
               <div style={{
                 background: 'rgba(239,68,68,0.12)',
-                border: '1px solid rgba(239,68,68,0.3)',
+                border: '1px solid rgba(239,68,68,0.25)',
                 borderRadius: '8px', padding: '10px 14px',
                 marginBottom: '16px',
               }}>
@@ -160,15 +149,12 @@ export default function LoginPage() {
             {/* Submit */}
             <button type="submit" disabled={loading} style={{
               width: '100%',
-              background: loading
-                ? 'rgba(13,148,136,0.4)'
-                : 'linear-gradient(135deg, #0d9488, #0f766e)',
+              background: loading ? 'rgba(13,148,136,0.4)' : '#0d9488',
               border: 'none', borderRadius: '10px',
               padding: '14px', color: '#fff',
               fontSize: '15px', fontWeight: 600,
               cursor: loading ? 'not-allowed' : 'pointer',
-              boxShadow: '0 4px 24px rgba(13,148,136,0.4)',
-              transition: 'opacity 0.2s',
+              boxShadow: '0 4px 20px rgba(13,148,136,0.3)',
             }}>
               {loading ? (
                 <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>

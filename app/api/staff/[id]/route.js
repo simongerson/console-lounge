@@ -1,52 +1,46 @@
-import { query } from '@/lib/mysqldb'
+import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
 import bcrypt from 'bcryptjs'
 
-// PATCH — update staff (reset PIN, toggle active)
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+)
+
 export async function PATCH(request, { params }) {
   try {
     const { name, pin, role, is_active } = await request.json()
-    const { id } = params
+    const updates = {}
 
     if (pin) {
       if (pin.length !== 4) {
         return NextResponse.json({ error: 'PIN must be 4 digits' }, { status: 400 })
       }
-      const hashed = await bcrypt.hash(pin, 10)
-      await query(
-        `UPDATE staff SET pin = ?, pin_attempts = 0,
-         locked_until = NULL WHERE id = ?`,
-        [hashed, id]
-      )
+      updates.pin          = await bcrypt.hash(pin, 10)
+      updates.pin_attempts = 0
+      updates.locked_until = null
     }
+    if (name      !== undefined) updates.name      = name
+    if (role      !== undefined) updates.role      = role
+    if (is_active !== undefined) updates.is_active = is_active
 
-    if (name !== undefined) {
-      await query('UPDATE staff SET name = ? WHERE id = ?', [name, id])
-    }
-    if (role !== undefined) {
-      await query('UPDATE staff SET role = ? WHERE id = ?', [role, id])
-    }
-    if (is_active !== undefined) {
-      await query('UPDATE staff SET is_active = ? WHERE id = ?',
-        [is_active ? 1 : 0, id])
-    }
+    // Always unlock on any update
+    updates.pin_attempts = 0
+    updates.locked_until = null
 
-    // Unlock if locked
-    await query(
-      `UPDATE staff SET pin_attempts = 0, locked_until = NULL WHERE id = ?`,
-      [id]
-    )
-
+    const { error } = await supabase
+      .from('staff').update(updates).eq('id', params.id)
+    if (error) throw error
     return NextResponse.json({ success: true })
   } catch (err) {
     return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }
 }
 
-// DELETE — remove staff
 export async function DELETE(request, { params }) {
   try {
-    await query('UPDATE staff SET is_active = 0 WHERE id = ?', [params.id])
+    await supabase.from('staff')
+      .update({ is_active: false }).eq('id', params.id)
     return NextResponse.json({ success: true })
   } catch (err) {
     return NextResponse.json({ error: 'Server error' }, { status: 500 })

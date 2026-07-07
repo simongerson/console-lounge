@@ -1,6 +1,10 @@
-import { query } from '@/lib/mysqldb'
+import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
-import { randomUUID } from 'crypto'
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+)
 
 export async function POST(request) {
   try {
@@ -10,21 +14,25 @@ export async function POST(request) {
     }
 
     // Check no open shift already
-    const existing = await query(
-      'SELECT id FROM shifts WHERE staff_id = ? AND closed_at IS NULL LIMIT 1',
-      [staffId]
-    )
-    if (existing.length > 0) {
+    const { data: existing } = await supabase
+      .from('shifts')
+      .select('id')
+      .eq('staff_id', staffId)
+      .is('closed_at', null)
+      .limit(1)
+
+    if (existing?.length) {
       return NextResponse.json({ shiftId: existing[0].id, alreadyOpen: true })
     }
 
-    const id = randomUUID()
-    await query(
-      `INSERT INTO shifts (id, staff_id, float_amount, opened_at)
-       VALUES (?, ?, ?, NOW())`,
-      [id, staffId, floatAmount || 0]
-    )
-    return NextResponse.json({ shiftId: id, success: true })
+    const { data, error } = await supabase
+      .from('shifts')
+      .insert({ staff_id: staffId, float_amount: floatAmount || 0 })
+      .select()
+      .single()
+
+    if (error) throw error
+    return NextResponse.json({ shiftId: data.id, success: true })
   } catch (err) {
     console.error(err)
     return NextResponse.json({ error: 'Server error' }, { status: 500 })

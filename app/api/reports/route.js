@@ -1,5 +1,10 @@
-import { query } from '@/lib/mysqldb'
+import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+)
 
 export async function GET(request) {
   try {
@@ -8,166 +13,114 @@ export async function GET(request) {
     const from   = searchParams.get('from')
     const to     = searchParams.get('to')
 
-    // Calculate date range
-    let startDate, endDate
     const now = new Date()
-    endDate   = now.toISOString().split('T')[0]
+    let startDate = new Date(now)
 
     if (period === 'custom' && from && to) {
-      startDate = from
-      endDate   = to
-    } else if (period === '7d') {
-      const d = new Date(now)
-      d.setDate(d.getDate() - 6)
-      startDate = d.toISOString().split('T')[0]
+      startDate = new Date(from)
     } else if (period === '30d') {
-      const d = new Date(now)
-      d.setDate(d.getDate() - 29)
-      startDate = d.toISOString().split('T')[0]
+      startDate.setDate(startDate.getDate() - 29)
     } else if (period === '90d') {
-      const d = new Date(now)
-      d.setDate(d.getDate() - 89)
-      startDate = d.toISOString().split('T')[0]
+      startDate.setDate(startDate.getDate() - 89)
+    } else {
+      startDate.setDate(startDate.getDate() - 6)
     }
 
-    // Summary stats
-    const [summary] = await query(
-      `SELECT
-         COALESCE(SUM(amount), 0)                          as total_revenue,
-         COUNT(*)                                          as total_sessions,
-         COALESCE(AVG(amount), 0)                          as avg_per_session,
-         SUM(CASE WHEN payment_method='cash'  THEN amount ELSE 0 END) as cash,
-         SUM(CASE WHEN payment_method='mpesa' THEN amount ELSE 0 END) as mpesa
-       FROM game_sessions
-       WHERE DATE(started_at) BETWEEN ? AND ?
-       AND status = 'completed'`,
-      [startDate, endDate]
-    )
+    const startStr = (period === 'custom' && from) ? from : startDate.toISOString().split('T')[0]
+    const endStr   = (period === 'custom' && to)   ? to   : now.toISOString().split('T')[0]
 
-    // Revenue by day for chart
-    const dailyRevenue = await query(
-      `SELECT
-         DATE(started_at)    as day,
-         DAYNAME(started_at) as day_name,
-         DATE_FORMAT(started_at, '%e %b') as label,
-         COALESCE(SUM(CASE WHEN status='completed' THEN amount ELSE 0 END), 0) as total,
-         COUNT(*)            as sessions
-       FROM game_sessions
-       WHERE DATE(started_at) BETWEEN ? AND ?
-       GROUP BY DATE(started_at)
-       ORDER BY day ASC`,
-      [startDate, endDate]
-    )
+    const { data: sessions } = await supabase
+      .from('game_sessions')
+      .select('*, session_rates(name), staff(name), consoles(name)')
+      .gte('started_at', `${startStr}T00:00:00`)
+      .lte('started_at', `${endStr}T23:59:59`)
+      .eq('status', 'completed')
 
-    // Fill missing days
+    const all = sessions || []
+    const total   = all.reduce((s, x) => s + Number(x.amount), 0)
+    const cash    = all.filter(s => s.payment_method === 'cash').reduce((s, x) => s + Number(x.amount), 0)
+    const mpesa   = all.filter(s => s.payment_method === 'mpesa').reduce((s, x) => s + Number(x.amount), 0)
+
+    // Chart — group by day
     const dayMap = {}
-    dailyRevenue.forEach(d => { dayMap[d.day] = d })
+    all.forEach(s => {
+      const day = s.started_at.split('T')[0]
+      if (!dayMap[day]) dayMap[day] = { total: 0, sessions: 0 }
+      dayMap[day].total    += Number(s.amount)
+      dayMap[day].sessions += 1
+    })
+
     const chartData = []
-    const start = new Date(startDate)
-    const end   = new Date(endDate)
+    const start = new Date(startStr)
+    const end   = new Date(endStr)
     for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-      const key    = d.toISOString().split('T')[0]
-      const isToday = key === endDate
-      const label  = isToday ? 'TODAY'
-        : d.toLocaleDateString('en-KE', { day: 'numeric', month: 'short' }).toUpperCase()
+      const key     = d.toISOString().split('T')[0]
+      const isToday = key === endStr
       chartData.push({
         day:      key,
-        label,
+        label:    isToday ? 'TODAY' : d.toLocaleDateString('en-KE', { day: 'numeric', month: 'short' }).toUpperCase(),
         total:    dayMap[key]?.total    || 0,
         sessions: dayMap[key]?.sessions || 0,
         isToday,
       })
     }
 
-    // By game type
-    const byGame = await query(
-      `SELECT
-         COALESCE(sr.name, 'Unknown') as game,
-         COUNT(*)                     as sessions,
-         COALESCE(SUM(gs.amount), 0)  as revenue
-       FROM game_sessions gs
-       LEFT JOIN session_rates sr ON sr.id = gs.rate_id
-       WHERE DATE(gs.started_at) BETWEEN ? AND ?
-       AND gs.status = 'completed'
-       GROUP BY sr.id, sr.name
-       ORDER BY revenue DESC`,
-      [startDate, endDate]
-    )
+    // By game
+    const gameMap = {}
+    all.forEach(s => {
+      const name = s.session_rates?.name || 'Unknown'
+      if (!gameMap[name]) gameMap[name] = { game: name, sessions: 0, revenue: 0 }
+      gameMap[name].sessions += 1
+      gameMap[name].revenue  += Number(s.amount)
+    })
+    const byGame = Object.values(gameMap).sort((a, b) => b.revenue - a.revenue)
 
-    // Peak hours (0–23)
-    const peakHours = await query(
-      `SELECT
-         HOUR(started_at) as hour,
-         COUNT(*)         as sessions
-       FROM game_sessions
-       WHERE DATE(started_at) BETWEEN ? AND ?
-       AND status = 'completed'
-       GROUP BY HOUR(started_at)
-       ORDER BY hour ASC`,
-      [startDate, endDate]
-    )
-
-    // Build full 24hr array
+    // Peak hours
     const hourMap = {}
-    peakHours.forEach(h => { hourMap[h.hour] = h.sessions })
+    all.forEach(s => {
+      const h = new Date(s.started_at).getHours()
+      hourMap[h] = (hourMap[h] || 0) + 1
+    })
     const peakData = Array.from({ length: 24 }, (_, i) => ({
       hour:     i,
-      label:    i === 0 ? '12am' : i < 12 ? `${i}am`
-               : i === 12 ? '12pm' : `${i-12}pm`,
+      label:    i === 0 ? '12am' : i < 12 ? `${i}am` : i === 12 ? '12pm' : `${i-12}pm`,
       sessions: hourMap[i] || 0,
     })).filter(h => h.sessions > 0 || (h.hour >= 8 && h.hour <= 23))
 
     // By staff
-    const byStaff = await query(
-      `SELECT
-         s.name               as staff,
-         COUNT(gs.id)         as sessions,
-         COALESCE(SUM(gs.amount), 0) as revenue
-       FROM game_sessions gs
-       JOIN staff s ON s.id = gs.staff_id
-       WHERE DATE(gs.started_at) BETWEEN ? AND ?
-       AND gs.status = 'completed'
-       GROUP BY gs.staff_id, s.name
-       ORDER BY revenue DESC`,
-      [startDate, endDate]
-    )
+    const staffMap = {}
+    all.forEach(s => {
+      const name = s.staff?.name || 'Unknown'
+      if (!staffMap[name]) staffMap[name] = { staff: name, sessions: 0, revenue: 0 }
+      staffMap[name].sessions += 1
+      staffMap[name].revenue  += Number(s.amount)
+    })
+    const byStaff = Object.values(staffMap).sort((a, b) => b.revenue - a.revenue)
 
     // By console
-    const byConsole = await query(
-      `SELECT
-         c.name               as console,
-         COUNT(gs.id)         as sessions,
-         COALESCE(SUM(gs.amount), 0) as revenue
-       FROM game_sessions gs
-       JOIN consoles c ON c.id = gs.console_id
-       WHERE DATE(gs.started_at) BETWEEN ? AND ?
-       AND gs.status = 'completed'
-       GROUP BY gs.console_id, c.name
-       ORDER BY revenue DESC`,
-      [startDate, endDate]
-    )
+    const consoleMap = {}
+    all.forEach(s => {
+      const name = s.consoles?.name || 'Unknown'
+      if (!consoleMap[name]) consoleMap[name] = { console: name, sessions: 0, revenue: 0 }
+      consoleMap[name].sessions += 1
+      consoleMap[name].revenue  += Number(s.amount)
+    })
+    const byConsole = Object.values(consoleMap).sort((a, b) => b.revenue - a.revenue)
 
-    const total     = Number(summary.total_revenue || 0)
-    const cash      = Number(summary.cash  || 0)
-    const mpesa     = Number(summary.mpesa || 0)
-    const sessions  = Number(summary.total_sessions || 0)
-    const days      = Math.max(1, chartData.length)
+    const days      = chartData.length || 1
     const avgPerDay = Math.round(total / days)
 
     return NextResponse.json({
-      period, startDate, endDate,
+      period, startDate: startStr, endDate: endStr,
       summary: {
-        total, sessions, cash, mpesa,
-        avgPerSession: Math.round(Number(summary.avg_per_session || 0)),
+        total, cash, mpesa,
+        sessions:      all.length,
+        avgPerSession: all.length ? Math.round(total / all.length) : 0,
         cashPct:  total > 0 ? Math.round((cash  / total) * 100) : 0,
         mpesaPct: total > 0 ? Math.round((mpesa / total) * 100) : 0,
         avgPerDay,
       },
-      chartData,
-      byGame,
-      peakData,
-      byStaff,
-      byConsole,
+      chartData, byGame, peakData, byStaff, byConsole,
     })
 
   } catch (err) {

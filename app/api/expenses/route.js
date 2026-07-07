@@ -1,44 +1,42 @@
-import { query } from '@/lib/mysqldb'
+import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
-import { randomUUID } from 'crypto'
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+)
 
 export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url)
     const date = searchParams.get('date') || new Date().toISOString().split('T')[0]
 
-    const expenses = await query(
-      `SELECT e.*, s.name as staff_name
-       FROM expenses e
-       LEFT JOIN shifts sh ON sh.id = e.shift_id
-       LEFT JOIN staff s   ON s.id  = sh.staff_id
-       WHERE e.expense_date = ?
-       ORDER BY e.created_at DESC`,
-      [date]
-    )
+    const { data: expenses } = await supabase
+      .from('expenses')
+      .select('*, shifts(staff(name))')
+      .eq('expense_date', date)
+      .order('created_at', { ascending: false })
 
-    const [summary] = await query(
-      `SELECT
-         COALESCE(SUM(amount), 0) as total,
-         COUNT(*) as count
-       FROM expenses WHERE expense_date = ?`,
-      [date]
-    )
+    const enriched = (expenses || []).map(e => ({
+      ...e, staff_name: e.shifts?.staff?.name || null,
+    }))
 
-    const byCategory = await query(
-      `SELECT category,
-         COALESCE(SUM(amount), 0) as total,
-         COUNT(*) as count
-       FROM expenses
-       WHERE expense_date = ?
-       GROUP BY category
-       ORDER BY total DESC`,
-      [date]
-    )
+    const total = enriched.reduce((s, e) => s + Number(e.amount), 0)
+    const byCategory = Object.values(
+      enriched.reduce((acc, e) => {
+        if (!acc[e.category]) acc[e.category] = { category: e.category, total: 0, count: 0 }
+        acc[e.category].total += Number(e.amount)
+        acc[e.category].count += 1
+        return acc
+      }, {})
+    ).sort((a, b) => b.total - a.total)
 
-    return NextResponse.json({ expenses, summary, byCategory })
+    return NextResponse.json({
+      expenses: enriched,
+      summary:  { total, count: enriched.length },
+      byCategory,
+    })
   } catch (err) {
-    console.error(err)
     return NextResponse.json({ expenses: [], summary: {}, byCategory: [] })
   }
 }
@@ -46,30 +44,19 @@ export async function GET(request) {
 export async function POST(request) {
   try {
     const { category, description, amount, date, shiftId } = await request.json()
-
     if (!category || !amount) {
-      return NextResponse.json(
-        { error: 'Category and amount required' }, { status: 400 }
-      )
+      return NextResponse.json({ error: 'Category and amount required' }, { status: 400 })
     }
-
-    const id = randomUUID()
-    await query(
-      `INSERT INTO expenses
-       (id, shift_id, category, description, amount, expense_date)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [
-        id,
-        shiftId || null,
-        category.trim(),
-        description?.trim() || null,
-        Number(amount),
-        date || new Date().toISOString().split('T')[0],
-      ]
-    )
-    return NextResponse.json({ success: true, id })
+    const { error } = await supabase.from('expenses').insert({
+      shift_id:     shiftId || null,
+      category:     category.trim(),
+      description:  description?.trim() || null,
+      amount:       Number(amount),
+      expense_date: date || new Date().toISOString().split('T')[0],
+    })
+    if (error) throw error
+    return NextResponse.json({ success: true })
   } catch (err) {
-    console.error(err)
     return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }
 }
@@ -78,8 +65,7 @@ export async function DELETE(request) {
   try {
     const { searchParams } = new URL(request.url)
     const id = searchParams.get('id')
-    if (!id) return NextResponse.json({ error: 'ID required' }, { status: 400 })
-    await query('DELETE FROM expenses WHERE id = ?', [id])
+    await supabase.from('expenses').delete().eq('id', id)
     return NextResponse.json({ success: true })
   } catch (err) {
     return NextResponse.json({ error: 'Server error' }, { status: 500 })

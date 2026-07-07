@@ -1,13 +1,19 @@
-import { query } from '@/lib/mysqldb'
+import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+)
 
 export async function GET(request, { params }) {
   try {
-    const rows = await query(
-      'SELECT * FROM game_sessions WHERE id = ? LIMIT 1',
-      [params.id]
-    )
-    return NextResponse.json({ session: rows[0] || null })
+    const { data } = await supabase
+      .from('game_sessions')
+      .select('*')
+      .eq('id', params.id)
+      .single()
+    return NextResponse.json({ session: data || null })
   } catch (err) {
     return NextResponse.json({ session: null })
   }

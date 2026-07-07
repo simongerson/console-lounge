@@ -1,34 +1,34 @@
-import { query } from '@/lib/mysqldb'
+import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
-import { randomUUID } from 'crypto'
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+)
 
 export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url)
     const date = searchParams.get('date') || new Date().toISOString().split('T')[0]
 
-    const cashouts = await query(
-      `SELECT co.*, s.name as staff_name
-       FROM cash_outs co
-       LEFT JOIN staff s ON s.id = co.staff_id
-       WHERE DATE(co.created_at) = ?
-       ORDER BY co.created_at DESC`,
-      [date]
-    )
+    const { data } = await supabase
+      .from('cash_outs')
+      .select('*, staff(name)')
+      .gte('created_at', `${date}T00:00:00`)
+      .lte('created_at', `${date}T23:59:59`)
+      .order('created_at', { ascending: false })
 
-    const [summary] = await query(
-      `SELECT
-         COALESCE(SUM(amount), 0) as total,
-         SUM(CASE WHEN status='pending'  THEN 1 ELSE 0 END) as pending,
-         SUM(CASE WHEN status='approved' THEN 1 ELSE 0 END) as approved,
-         SUM(CASE WHEN status='rejected' THEN 1 ELSE 0 END) as rejected
-       FROM cash_outs WHERE DATE(created_at) = ?`,
-      [date]
-    )
+    const cashouts = (data || []).map(c => ({ ...c, staff_name: c.staff?.name }))
+    const total    = cashouts.reduce((s, c) => s + Number(c.amount), 0)
+    const summary  = {
+      total,
+      pending:  cashouts.filter(c => c.status === 'pending').length,
+      approved: cashouts.filter(c => c.status === 'approved').length,
+      rejected: cashouts.filter(c => c.status === 'rejected').length,
+    }
 
     return NextResponse.json({ cashouts, summary })
   } catch (err) {
-    console.error(err)
     return NextResponse.json({ cashouts: [], summary: {} })
   }
 }
@@ -37,18 +37,17 @@ export async function POST(request) {
   try {
     const { staffId, shiftId, amount, reason } = await request.json()
     if (!amount) {
-      return NextResponse.json(
-        { error: 'Amount required' }, { status: 400 }
-      )
+      return NextResponse.json({ error: 'Amount required' }, { status: 400 })
     }
-    const id = randomUUID()
-    await query(
-      `INSERT INTO cash_outs (id, staff_id, shift_id, amount, reason, status)
-       VALUES (?, ?, ?, ?, ?, 'pending')`,
-      [id, staffId || null, shiftId || null,
-       Number(amount), reason?.trim() || null]
-    )
-    return NextResponse.json({ success: true, id })
+    const { error } = await supabase.from('cash_outs').insert({
+      staff_id: staffId || null,
+      shift_id: shiftId || null,
+      amount:   Number(amount),
+      reason:   reason?.trim() || null,
+      status:   'pending',
+    })
+    if (error) throw error
+    return NextResponse.json({ success: true })
   } catch (err) {
     return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }

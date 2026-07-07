@@ -1,5 +1,10 @@
-import { query } from '@/lib/mysqldb'
+import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+)
 
 export async function POST(request) {
   try {
@@ -8,57 +13,48 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Shift ID required' }, { status: 400 })
     }
 
-    // Get all completed sessions for this shift
-    const sessions = await query(
-      `SELECT payment_method, SUM(amount) as total
-       FROM game_sessions
-       WHERE shift_id = ? AND status = 'completed'
-       GROUP BY payment_method`,
-      [shiftId]
-    )
+    // Get completed sessions for this shift
+    const { data: sessions } = await supabase
+      .from('game_sessions')
+      .select('payment_method, amount')
+      .eq('shift_id', shiftId)
+      .eq('status', 'completed')
 
     let cashExpected  = 0
     let mpesaExpected = 0
-    sessions.forEach(s => {
-      if (s.payment_method === 'cash')  cashExpected  = Number(s.total)
-      if (s.payment_method === 'mpesa') mpesaExpected = Number(s.total)
+    sessions?.forEach(s => {
+      if (s.payment_method === 'cash')  cashExpected  += Number(s.amount)
+      if (s.payment_method === 'mpesa') mpesaExpected += Number(s.amount)
     })
-
-    // Get expenses for this shift
-    const expenses = await query(
-      'SELECT SUM(amount) as total FROM expenses WHERE shift_id = ?',
-      [shiftId]
-    )
-    const totalExpenses = Number(expenses[0]?.total || 0)
 
     const cashDec  = Number(cashDeclared  || 0)
     const mpesaDec = Number(mpesaDeclared || 0)
     const variance = (cashDec + mpesaDec) - (cashExpected + mpesaExpected)
 
-    await query(
-      `UPDATE shifts SET
-        closed_at       = NOW(),
-        cash_declared   = ?,
-        mpesa_declared  = ?,
-        cash_expected   = ?,
-        mpesa_expected  = ?,
-        variance        = ?
-       WHERE id = ?`,
-      [cashDec, mpesaDec, cashExpected, mpesaExpected, variance, shiftId]
-    )
+    const { error } = await supabase
+      .from('shifts')
+      .update({
+        closed_at:      new Date().toISOString(),
+        cash_declared:  cashDec,
+        mpesa_declared: mpesaDec,
+        cash_expected:  cashExpected,
+        mpesa_expected: mpesaExpected,
+        variance,
+      })
+      .eq('id', shiftId)
+
+    if (error) throw error
 
     return NextResponse.json({
       success: true,
       summary: {
         cashExpected, mpesaExpected,
         cashDeclared: cashDec, mpesaDeclared: mpesaDec,
-        totalExpenses, variance,
-        total: cashExpected + mpesaExpected,
+        variance, total: cashExpected + mpesaExpected,
       }
     })
-
   } catch (err) {
-    console.error('Close shift error:', err)
+    console.error(err)
     return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }
 }

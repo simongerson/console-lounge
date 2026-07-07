@@ -1,20 +1,23 @@
-import { query } from '@/lib/mysqldb'
+import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+)
 
 export async function PATCH(request, { params }) {
   try {
-    const { name, console_type, is_active } = await request.json()
-    if (name !== undefined) {
-      await query('UPDATE consoles SET name = ? WHERE id = ?', [name, params.id])
-    }
-    if (console_type !== undefined) {
-      await query('UPDATE consoles SET console_type = ? WHERE id = ?',
-        [console_type, params.id])
-    }
-    if (is_active !== undefined) {
-      await query('UPDATE consoles SET is_active = ? WHERE id = ?',
-        [is_active ? 1 : 0, params.id])
-    }
+    const body = await request.json()
+    const updates = {}
+    if (body.name        !== undefined) updates.name         = body.name
+    if (body.console_type!== undefined) updates.console_type = body.console_type
+    if (body.is_active   !== undefined) updates.is_active    = body.is_active
+    if (body.status      !== undefined) updates.status       = body.status
+
+    const { error } = await supabase
+      .from('consoles').update(updates).eq('id', params.id)
+    if (error) throw error
     return NextResponse.json({ success: true })
   } catch (err) {
     return NextResponse.json({ error: 'Server error' }, { status: 500 })
@@ -23,7 +26,8 @@ export async function PATCH(request, { params }) {
 
 export async function DELETE(request, { params }) {
   try {
-    await query('UPDATE consoles SET is_active = 0 WHERE id = ?', [params.id])
+    await supabase.from('consoles')
+      .update({ is_active: false }).eq('id', params.id)
     return NextResponse.json({ success: true })
   } catch (err) {
     return NextResponse.json({ error: 'Server error' }, { status: 500 })

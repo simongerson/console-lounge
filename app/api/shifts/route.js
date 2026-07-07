@@ -1,5 +1,10 @@
-import { query } from '@/lib/mysqldb'
+import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+)
 
 export async function GET(request) {
   try {
@@ -7,64 +12,73 @@ export async function GET(request) {
     const date    = searchParams.get('date') || new Date().toISOString().split('T')[0]
     const staffId = searchParams.get('staffId') || null
 
-    let where = 'WHERE DATE(sh.opened_at) = ?'
-    const params = [date]
-    if (staffId) { where += ' AND sh.staff_id = ?'; params.push(staffId) }
+    let q = supabase
+      .from('shifts')
+      .select('*, staff:staff(name)')
+      .gte('opened_at', `${date}T00:00:00`)
+      .lte('opened_at', `${date}T23:59:59`)
+      .order('opened_at', { ascending: false })
 
-    const shifts = await query(
-      `SELECT sh.*, s.name as staff_name,
-         COALESCE((SELECT SUM(g.amount) FROM game_sessions g
-           WHERE g.shift_id = sh.id AND g.status = 'completed'), 0) as revenue,
-         COALESCE((SELECT SUM(g.amount) FROM game_sessions g
-           WHERE g.shift_id = sh.id AND g.status = 'completed'
-           AND g.payment_method = 'cash'), 0) as cash_revenue,
-         COALESCE((SELECT SUM(g.amount) FROM game_sessions g
-           WHERE g.shift_id = sh.id AND g.status = 'completed'
-           AND g.payment_method = 'mpesa'), 0) as mpesa_revenue,
-         (SELECT COUNT(*) FROM game_sessions g
-           WHERE g.shift_id = sh.id) as session_count,
-         (SELECT COUNT(*) FROM game_sessions g
-           WHERE g.shift_id = sh.id AND g.status = 'active') as unpaid_count,
-         COALESCE((SELECT SUM(co.amount) FROM cash_outs co
-           WHERE co.shift_id = sh.id), 0) as cashouts
-       FROM shifts sh
-       JOIN staff s ON s.id = sh.staff_id
-       ${where}
-       ORDER BY sh.opened_at DESC`,
-      params
-    )
+    if (staffId) q = q.eq('staff_id', staffId)
 
-    // Summary stats
-    const [summary] = await query(
-      `SELECT
-         COUNT(*) as total_shifts,
-         SUM(CASE WHEN closed_at IS NULL THEN 1 ELSE 0 END) as live_shifts,
-         SUM(CASE WHEN closed_at IS NOT NULL THEN cash_expected ELSE 0 END) as expected_cash,
-         SUM(CASE WHEN closed_at IS NOT NULL THEN cash_declared ELSE 0 END) as cash_counted,
-         SUM(CASE WHEN closed_at IS NOT NULL THEN variance ELSE 0 END) as net_discrepancy
-       FROM shifts sh WHERE DATE(opened_at) = ?`,
-      [date]
-    )
+    const { data: shifts } = await q
 
-    // Last 10 shifts per staff for discrepancy history
-    const allStaff = await query(
-      `SELECT DISTINCT s.id, s.name FROM staff s
-       JOIN shifts sh ON sh.staff_id = s.id
-       WHERE is_active = 1 ORDER BY s.name`
-    )
+    // Enrich each shift with revenue + session counts
+    const enriched = await Promise.all((shifts || []).map(async sh => {
+      const { data: sessions } = await supabase
+        .from('game_sessions')
+        .select('amount, payment_method, status')
+        .eq('shift_id', sh.id)
 
-    const history = {}
-    for (const st of allStaff) {
-      const rows = await query(
-        `SELECT variance FROM shifts
-         WHERE staff_id = ? AND closed_at IS NOT NULL
-         ORDER BY closed_at DESC LIMIT 10`,
-        [st.id]
-      )
-      history[st.id] = { name: st.name, variances: rows.map(r => Number(r.variance || 0)) }
+      const revenue      = sessions?.filter(s => s.status === 'completed')
+        .reduce((sum, s) => sum + Number(s.amount), 0) || 0
+      const cash_revenue = sessions?.filter(s => s.status === 'completed' && s.payment_method === 'cash')
+        .reduce((sum, s) => sum + Number(s.amount), 0) || 0
+      const mpesa_revenue= sessions?.filter(s => s.status === 'completed' && s.payment_method === 'mpesa')
+        .reduce((sum, s) => sum + Number(s.amount), 0) || 0
+      const unpaid_count = sessions?.filter(s => s.status === 'active').length || 0
+
+      return {
+        ...sh,
+        staff_name: sh.staff?.name,
+        revenue, cash_revenue, mpesa_revenue,
+        session_count: sessions?.length || 0,
+        unpaid_count,
+      }
+    }))
+
+    // Summary
+    const allShifts = enriched
+    const summary = {
+      total_shifts:      allShifts.length,
+      live_shifts:       allShifts.filter(s => !s.closed_at).length,
+      expected_cash:     allShifts.filter(s => s.closed_at).reduce((sum, s) => sum + Number(s.cash_expected || 0), 0),
+      cash_counted:      allShifts.filter(s => s.closed_at).reduce((sum, s) => sum + Number(s.cash_declared || 0), 0),
+      net_discrepancy:   allShifts.filter(s => s.closed_at).reduce((sum, s) => sum + Number(s.variance || 0), 0),
     }
 
-    return NextResponse.json({ shifts, summary, history })
+    // Discrepancy history per staff
+    const { data: allStaff } = await supabase
+      .from('staff')
+      .select('id, name')
+      .eq('is_active', true)
+
+    const history = {}
+    await Promise.all((allStaff || []).map(async st => {
+      const { data: rows } = await supabase
+        .from('shifts')
+        .select('variance')
+        .eq('staff_id', st.id)
+        .not('closed_at', 'is', null)
+        .order('closed_at', { ascending: false })
+        .limit(10)
+      history[st.id] = {
+        name:      st.name,
+        variances: (rows || []).map(r => Number(r.variance || 0)),
+      }
+    }))
+
+    return NextResponse.json({ shifts: enriched, summary, history })
   } catch (err) {
     console.error(err)
     return NextResponse.json({ shifts: [], summary: {}, history: {} })

@@ -1,75 +1,73 @@
-import { query } from '@/lib/mysqldb'
+import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
-import { randomUUID } from 'crypto'
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+)
 
 export async function POST(request) {
   try {
-    const { consoleId, staffId, shiftId, rateId, rateName,
-            duration, amount, paymentMethod, customerName,
-            customerPhone, notes } = await request.json()
+    const { consoleId, staffId, shiftId, rateId, amount,
+            paymentMethod, customerName, customerPhone, notes } = await request.json()
 
     if (!consoleId || !staffId || !shiftId) {
-      return NextResponse.json(
-        { error: 'Missing required fields' }, { status: 400 }
-      )
+      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
     }
 
-    // Check console is not already active
-    const active = await query(
-      `SELECT id FROM game_sessions 
-       WHERE console_id = ? AND status = 'active' LIMIT 1`,
-      [consoleId]
-    )
-    if (active.length > 0) {
+    // Check not already active
+    const { data: active } = await supabase
+      .from('game_sessions')
+      .select('id')
+      .eq('console_id', consoleId)
+      .eq('status', 'active')
+      .limit(1)
+
+    if (active?.length) {
       return NextResponse.json(
         { error: 'Console already has an active session' }, { status: 400 }
       )
     }
 
-    const id = randomUUID()
     const isDebt = paymentMethod === 'debt'
 
-    await query(
-      `INSERT INTO game_sessions 
-       (id, console_id, shift_id, staff_id, rate_id,
-        customer_name, customer_phone, amount,
-        payment_method, status, notes, started_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
-      [
-        id, consoleId, shiftId, staffId, rateId || null,
-        customerName || null, customerPhone || null,
-        amount || 0,
-        paymentMethod || 'cash',
-        isDebt ? 'debt' : 'active',
-        notes || null,
-      ]
-    )
+    const { data: session, error } = await supabase
+      .from('game_sessions')
+      .insert({
+        console_id:     consoleId,
+        shift_id:       shiftId,
+        staff_id:       staffId,
+        rate_id:        rateId || null,
+        customer_name:  customerName || null,
+        customer_phone: customerPhone || null,
+        amount:         amount || 0,
+        payment_method: paymentMethod || 'cash',
+        status:         isDebt ? 'debt' : 'active',
+        notes:          notes || null,
+      })
+      .select()
+      .single()
 
-    // Mark console as active
-    await query(
-      `UPDATE consoles SET status = 'active' WHERE id = ?`,
-      [consoleId]
-    )
+    if (error) throw error
 
-    // If debt — create debt record
+    // Mark console active
+    await supabase.from('consoles')
+      .update({ status: 'active' }).eq('id', consoleId)
+
+    // Create debt record
     if (isDebt && amount > 0) {
-      await query(
-        `INSERT INTO debts 
-         (id, game_session_id, customer_name, customer_phone, amount, status)
-         VALUES (?, ?, ?, ?, ?, 'outstanding')`,
-        [
-          randomUUID(), id,
-          customerName || 'Unknown',
-          customerPhone || null,
-          amount,
-        ]
-      )
+      await supabase.from('debts').insert({
+        game_session_id: session.id,
+        customer_name:   customerName || 'Unknown',
+        customer_phone:  customerPhone || null,
+        amount:          amount,
+        status:          'outstanding',
+      })
     }
 
-    return NextResponse.json({ success: true, sessionId: id })
-
+    return NextResponse.json({ success: true, sessionId: session.id })
   } catch (err) {
-    console.error('Start session error:', err)
+    console.error(err)
     return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }
 }

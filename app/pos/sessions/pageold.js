@@ -17,12 +17,6 @@ export default function SessionsPage() {
   })
   const [saving, setSaving]       = useState(false)
   const [error, setError]         = useState('')
-
-  // STK push state
-  const [stkStatus, setStkStatus]         = useState('idle') // idle | sending | pending | success | failed
-  const [stkCheckoutId, setStkCheckoutId] = useState(null)
-  const [pendingSessionId, setPendingSessionId] = useState(null)
-
   const router = useRouter()
 
   useEffect(() => {
@@ -62,17 +56,7 @@ export default function SessionsPage() {
       paymentMethod: 'cash', customerName: '', customerPhone: '', notes: ''
     })
     setError('')
-    setStkStatus('idle')
-    setStkCheckoutId(null)
-    setPendingSessionId(null)
     setShowStart(true)
-  }
-
-  function closeStartModal() {
-    setShowStart(false)
-    setStkStatus('idle')
-    setStkCheckoutId(null)
-    setPendingSessionId(null)
   }
 
   function getAmount() {
@@ -81,30 +65,6 @@ export default function SessionsPage() {
     return rate ? Number(rate.price) : 0
   }
 
-  // Creates the session record. Returns the new sessionId, or null on failure.
-  async function createSession(paymentMethodOverride) {
-    const rate = rates.find(r => r.id === form.rateId)
-    const res  = await fetch('/api/sessions/start', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        consoleId:     selected.id,
-        staffId, shiftId,
-        rateId:        form.rateId === 'custom' ? null : form.rateId,
-        rateName:      rate?.name || 'Custom',
-        amount:        getAmount(),
-        paymentMethod: paymentMethodOverride || form.paymentMethod,
-        customerName:  form.customerName || null,
-        customerPhone: form.customerPhone || null,
-        notes:         form.notes || null,
-      }),
-    })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.error || 'Failed to start session')
-    return data.sessionId
-  }
-
-  // Cash / Debt / manual M-Pesa path — unchanged behavior.
   async function startSession() {
     if (!form.rateId) { setError('Select a rate'); return }
     const amount = getAmount()
@@ -113,91 +73,31 @@ export default function SessionsPage() {
     }
     setSaving(true); setError('')
     try {
-      await createSession()
-      closeStartModal()
-      await loadData()
-    } catch (err) {
-      setError(err.message || 'Connection error')
-    }
-    setSaving(false)
-  }
-
-  // M-Pesa STK Push path — creates the session first, then sends the prompt.
-  async function startSessionWithSTK() {
-    if (!form.rateId) { setError('Select a rate'); return }
-    const amount = getAmount()
-    if (form.rateId === 'custom' && !amount) {
-      setError('Enter an amount'); return
-    }
-    if (!form.customerPhone || form.customerPhone.trim().length < 9) {
-      setError('Enter the customer\'s phone number for the STK push'); return
-    }
-
-    setError('')
-    setStkStatus('sending')
-    try {
-      // Create session with payment_method 'mpesa_stk' so it's visible in the
-      // grid as active immediately, even before the push is confirmed.
-      const sessionId = await createSession('mpesa_stk')
-      setPendingSessionId(sessionId)
-
-      const res = await fetch('/api/mpesa/stkpush', {
+      const rate = rates.find(r => r.id === form.rateId)
+      const res  = await fetch('/api/sessions/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          phone: form.customerPhone,
+          consoleId:     selected.id,
+          staffId, shiftId,
+          rateId:        form.rateId === 'custom' ? null : form.rateId,
+          rateName:      rate?.name || 'Custom',
           amount,
-          accountReference: form.customerName || selected.name,
-          transactionDesc: `${selected.name} session payment`,
-          source: 'session',
-          sourceId: sessionId,
+          paymentMethod: form.paymentMethod,
+          customerName:  form.customerName || null,
+          customerPhone: form.customerPhone || null,
+          notes:         form.notes || null,
         }),
       })
       const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Failed to send STK push')
-
-      setStkCheckoutId(data.checkoutRequestId)
-      setStkStatus('pending')
-      await loadData() // reflect the new active session in the grid right away
-    } catch (err) {
-      setError(err.message)
-      setStkStatus('idle')
+      if (!res.ok) { setError(data.error || 'Failed'); setSaving(false); return }
+      setShowStart(false)
+      await loadData()
+    } catch {
+      setError('Connection error')
     }
+    setSaving(false)
   }
-
-  // Poll while an STK push is pending
-  useEffect(() => {
-    if (stkStatus !== 'pending' || !stkCheckoutId) return
-
-    const interval = setInterval(async () => {
-      try {
-        const res  = await fetch(`/api/mpesa/status/${stkCheckoutId}`)
-        const data = await res.json()
-
-        if (data.status === 'success') {
-          setStkStatus('success')
-          clearInterval(interval)
-          setTimeout(() => { closeStartModal(); loadData() }, 1500)
-        } else if (data.status === 'failed') {
-          setStkStatus('failed')
-          setError(data.resultDesc || 'Customer did not complete payment')
-          clearInterval(interval)
-        }
-      } catch (err) {
-        console.error('Status poll error:', err)
-      }
-    }, 3000)
-
-    const timeout = setTimeout(() => {
-      clearInterval(interval)
-      if (stkStatus === 'pending') {
-        setStkStatus('failed')
-        setError('Payment timed out — customer did not respond in time')
-      }
-    }, 120000)
-
-    return () => { clearInterval(interval); clearTimeout(timeout) }
-  }, [stkStatus, stkCheckoutId])
 
   function timeElapsed(startedAt) {
     if (!startedAt) return '0m'
@@ -383,7 +283,7 @@ export default function SessionsPage() {
           display: 'flex', alignItems: 'flex-end',
           justifyContent: 'center',
         }}
-          onClick={e => e.target === e.currentTarget && stkStatus !== 'pending' && stkStatus !== 'sending' && closeStartModal()}>
+          onClick={e => e.target === e.currentTarget && setShowStart(false)}>
           <div style={{
             background: '#141414',
             border: '1px solid rgba(13,148,136,0.2)',
@@ -403,15 +303,10 @@ export default function SessionsPage() {
                   {selected.console_type} · Start new session
                 </p>
               </div>
-              <button
-                onClick={closeStartModal}
-                disabled={stkStatus === 'pending' || stkStatus === 'sending'}
-                style={{
-                  background: 'none', border: 'none',
-                  color: 'rgba(255,255,255,0.4)', fontSize: '22px',
-                  cursor: stkStatus === 'pending' || stkStatus === 'sending' ? 'not-allowed' : 'pointer',
-                  opacity: stkStatus === 'pending' || stkStatus === 'sending' ? 0.4 : 1,
-                }}>×</button>
+              <button onClick={() => setShowStart(false)} style={{
+                background: 'none', border: 'none',
+                color: 'rgba(255,255,255,0.4)', fontSize: '22px', cursor: 'pointer',
+              }}>×</button>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
@@ -428,7 +323,6 @@ export default function SessionsPage() {
                   {rates.map(r => (
                     <button key={r.id}
                       onClick={() => setForm(f => ({ ...f, rateId: r.id }))}
-                      disabled={stkStatus === 'pending' || stkStatus === 'sending'}
                       style={{
                         padding: '10px 6px', borderRadius: '10px',
                         border: form.rateId === r.id
@@ -450,7 +344,6 @@ export default function SessionsPage() {
                   ))}
                   <button
                     onClick={() => setForm(f => ({ ...f, rateId: 'custom' }))}
-                    disabled={stkStatus === 'pending' || stkStatus === 'sending'}
                     style={{
                       padding: '10px 6px', borderRadius: '10px',
                       border: form.rateId === 'custom'
@@ -479,7 +372,6 @@ export default function SessionsPage() {
                   <input type="number" value={form.customAmount}
                     onChange={e => setForm(f => ({ ...f, customAmount: e.target.value }))}
                     placeholder="0"
-                    disabled={stkStatus === 'pending' || stkStatus === 'sending'}
                     style={{
                       width: '100%', boxSizing: 'border-box',
                       background: 'rgba(255,255,255,0.06)',
@@ -501,16 +393,14 @@ export default function SessionsPage() {
                   letterSpacing: '1px', display: 'block', marginBottom: '8px' }}>
                   Payment
                 </label>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: '8px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '8px' }}>
                   {[
-                    { key: 'cash',      label: '💵 Cash' },
-                    { key: 'mpesa',     label: '📱 M-Pesa (Manual)' },
-                    { key: 'mpesa_stk', label: '📲 M-Pesa (STK Push)' },
-                    { key: 'debt',      label: '📋 Debt' },
+                    { key: 'cash',  label: '💵 Cash' },
+                    { key: 'mpesa', label: '📱 M-Pesa' },
+                    { key: 'debt',  label: '📋 Debt' },
                   ].map(m => (
                     <button key={m.key}
                       onClick={() => setForm(f => ({ ...f, paymentMethod: m.key }))}
-                      disabled={stkStatus === 'pending' || stkStatus === 'sending'}
                       style={{
                         padding: '10px', borderRadius: '10px',
                         border: form.paymentMethod === m.key
@@ -540,7 +430,6 @@ export default function SessionsPage() {
                 <input type="text" value={form.customerName}
                   onChange={e => setForm(f => ({ ...f, customerName: e.target.value }))}
                   placeholder="e.g. John"
-                  disabled={stkStatus === 'pending' || stkStatus === 'sending'}
                   style={{
                     width: '100%', boxSizing: 'border-box',
                     background: 'rgba(255,255,255,0.06)',
@@ -552,57 +441,6 @@ export default function SessionsPage() {
                   onBlur={e => e.target.style.border = '1px solid rgba(255,255,255,0.1)'}
                 />
               </div>
-
-              {/* Customer phone — required for STK push */}
-              {form.paymentMethod === 'mpesa_stk' && (
-                <div>
-                  <label style={{ color: 'rgba(255,255,255,0.45)', fontSize: '11px',
-                    fontWeight: 600, textTransform: 'uppercase',
-                    letterSpacing: '1px', display: 'block', marginBottom: '6px' }}>
-                    Customer phone
-                  </label>
-                  <input type="text" value={form.customerPhone}
-                    onChange={e => setForm(f => ({ ...f, customerPhone: e.target.value }))}
-                    placeholder="e.g. 0712345678"
-                    disabled={stkStatus === 'pending' || stkStatus === 'sending'}
-                    style={{
-                      width: '100%', boxSizing: 'border-box',
-                      background: 'rgba(255,255,255,0.06)',
-                      border: '1px solid rgba(255,255,255,0.1)',
-                      borderRadius: '10px', padding: '11px 14px',
-                      color: '#fff', fontSize: '14px', outline: 'none',
-                    }}
-                    onFocus={e => e.target.style.border = '1px solid rgba(13,148,136,0.7)'}
-                    onBlur={e => e.target.style.border = '1px solid rgba(255,255,255,0.1)'}
-                  />
-
-                  {stkStatus === 'pending' && (
-                    <div style={{
-                      marginTop: '10px',
-                      background: 'rgba(201,168,76,0.12)',
-                      border: '1px solid rgba(201,168,76,0.3)',
-                      borderRadius: '10px', padding: '10px 12px',
-                      color: '#c9a84c', fontSize: '13px', fontWeight: 600,
-                      textAlign: 'center',
-                    }}>
-                      Waiting for customer to approve on their phone...
-                    </div>
-                  )}
-
-                  {stkStatus === 'success' && (
-                    <div style={{
-                      marginTop: '10px',
-                      background: 'rgba(16,185,129,0.12)',
-                      border: '1px solid rgba(16,185,129,0.3)',
-                      borderRadius: '10px', padding: '10px 12px',
-                      color: '#10b981', fontSize: '13px', fontWeight: 600,
-                      textAlign: 'center',
-                    }}>
-                      ✅ Payment received — session started
-                    </div>
-                  )}
-                </div>
-              )}
 
               {/* Error */}
               {error && (
@@ -624,36 +462,16 @@ export default function SessionsPage() {
                 </span>
               </div>
 
-              {form.paymentMethod === 'mpesa_stk' ? (
-                <button
-                  onClick={startSessionWithSTK}
-                  disabled={stkStatus === 'sending' || stkStatus === 'pending' || stkStatus === 'success'}
-                  style={{
-                    width: '100%',
-                    background: (stkStatus === 'sending' || stkStatus === 'pending')
-                      ? 'rgba(13,148,136,0.4)' : '#0d9488',
-                    border: 'none', borderRadius: '12px', padding: '16px',
-                    color: '#fff', fontSize: '16px', fontWeight: 600,
-                    cursor: (stkStatus === 'sending' || stkStatus === 'pending') ? 'not-allowed' : 'pointer',
-                    boxShadow: '0 4px 20px rgba(13,148,136,0.3)',
-                  }}>
-                  {stkStatus === 'sending' ? 'Sending prompt...'
-                    : stkStatus === 'pending' ? 'Waiting for customer...'
-                    : stkStatus === 'success' ? 'Done'
-                    : '📲 Send STK Push & Start'}
-                </button>
-              ) : (
-                <button onClick={startSession} disabled={saving} style={{
-                  width: '100%',
-                  background: saving ? 'rgba(13,148,136,0.4)' : '#0d9488',
-                  border: 'none', borderRadius: '12px', padding: '16px',
-                  color: '#fff', fontSize: '16px', fontWeight: 600,
-                  cursor: saving ? 'not-allowed' : 'pointer',
-                  boxShadow: '0 4px 20px rgba(13,148,136,0.3)',
-                }}>
-                  {saving ? 'Starting...' : '▶ Start session'}
-                </button>
-              )}
+              <button onClick={startSession} disabled={saving} style={{
+                width: '100%',
+                background: saving ? 'rgba(13,148,136,0.4)' : '#0d9488',
+                border: 'none', borderRadius: '12px', padding: '16px',
+                color: '#fff', fontSize: '16px', fontWeight: 600,
+                cursor: saving ? 'not-allowed' : 'pointer',
+                boxShadow: '0 4px 20px rgba(13,148,136,0.3)',
+              }}>
+                {saving ? 'Starting...' : '▶ Start session'}
+              </button>
             </div>
           </div>
         </div>

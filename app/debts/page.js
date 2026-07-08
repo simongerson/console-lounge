@@ -20,6 +20,11 @@ export default function DebtsPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
+  // STK push specific state
+  const [stkPhone, setStkPhone] = useState('');
+  const [stkStatus, setStkStatus] = useState('idle'); // idle | sending | pending | success | failed
+  const [stkCheckoutId, setStkCheckoutId] = useState(null);
+
   useEffect(() => {
     fetchDebts();
   }, [statusFilter]);
@@ -47,6 +52,9 @@ export default function DebtsPage() {
     setPaymentAmount(String(debt.balance));
     setPaymentMethod('cash');
     setMpesaRef('');
+    setStkPhone(debt.customer_phone || '');
+    setStkStatus('idle');
+    setStkCheckoutId(null);
     setError('');
   }
 
@@ -54,6 +62,9 @@ export default function DebtsPage() {
     setSelectedDebt(null);
     setPaymentAmount('');
     setMpesaRef('');
+    setStkPhone('');
+    setStkStatus('idle');
+    setStkCheckoutId(null);
     setError('');
   }
 
@@ -98,6 +109,87 @@ export default function DebtsPage() {
     }
   }
 
+  async function triggerSTKPush() {
+    setError('');
+
+    const amount = Number(paymentAmount);
+    if (!amount || amount <= 0) {
+      setError('Enter a valid payment amount');
+      return;
+    }
+    if (amount > Number(selectedDebt.balance)) {
+      setError('Amount cannot exceed the outstanding balance');
+      return;
+    }
+    if (!stkPhone || stkPhone.trim().length < 9) {
+      setError('Enter a valid phone number');
+      return;
+    }
+
+    setStkStatus('sending');
+    try {
+      const res = await fetch('/api/mpesa/stkpush', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          phone: stkPhone,
+          amount,
+          accountReference: selectedDebt.customer_name || 'Debt Payment',
+          transactionDesc: `Debt payment - ${selectedDebt.customer_name || 'customer'}`,
+          source: 'debt',
+          sourceId: selectedDebt.id,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to send STK push');
+
+      setStkCheckoutId(data.checkoutRequestId);
+      setStkStatus('pending');
+    } catch (err) {
+      setError(err.message);
+      setStkStatus('idle');
+    }
+  }
+
+  // Poll every 3 seconds while an STK push is pending
+  useEffect(() => {
+    if (stkStatus !== 'pending' || !stkCheckoutId) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/mpesa/status/${stkCheckoutId}`);
+        const data = await res.json();
+
+        if (data.status === 'success') {
+          setStkStatus('success');
+          clearInterval(interval);
+          fetchDebts();
+          setTimeout(() => closeModal(), 1500);
+        } else if (data.status === 'failed') {
+          setStkStatus('failed');
+          setError(data.resultDesc || 'Payment was not completed');
+          clearInterval(interval);
+        }
+      } catch (err) {
+        console.error('Status poll error:', err);
+      }
+    }, 3000);
+
+    const timeout = setTimeout(() => {
+      clearInterval(interval);
+      if (stkStatus === 'pending') {
+        setStkStatus('failed');
+        setError('Payment timed out — customer did not respond in time');
+      }
+    }, 120000);
+
+    return () => {
+      clearInterval(interval);
+      clearTimeout(timeout);
+    };
+  }, [stkStatus, stkCheckoutId]);
+
   async function deleteDebt(debt) {
     if (
       !confirm(
@@ -136,7 +228,6 @@ export default function DebtsPage() {
         Debts
       </h1>
 
-      {/* Summary cards */}
       {summary && (
         <div
           style={{
@@ -173,7 +264,6 @@ export default function DebtsPage() {
         </div>
       )}
 
-      {/* Filter tabs */}
       <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
         {['all', 'outstanding', 'partial', 'cleared'].map((s) => (
           <button
@@ -196,7 +286,6 @@ export default function DebtsPage() {
         ))}
       </div>
 
-      {/* Debts table */}
       <div style={{ ...cardStyle, padding: 0, overflow: 'hidden' }}>
         {loading ? (
           <div style={{ padding: '40px', textAlign: 'center', color: '#8a8780' }}>
@@ -309,7 +398,6 @@ export default function DebtsPage() {
         )}
       </div>
 
-      {/* Payment modal */}
       {selectedDebt && (
         <div
           style={{
@@ -359,26 +447,29 @@ export default function DebtsPage() {
 
             <div style={sectionLabel}>Payment Method</div>
             <div style={{ display: 'flex', gap: '8px', marginTop: '6px', marginBottom: '16px' }}>
-              {['cash', 'mpesa'].map((method) => (
+              {[
+                { key: 'cash', label: 'Cash' },
+                { key: 'mpesa', label: 'M-Pesa (Manual)' },
+                { key: 'mpesa_stk', label: 'M-Pesa (STK Push)' },
+              ].map((method) => (
                 <button
-                  key={method}
-                  onClick={() => setPaymentMethod(method)}
+                  key={method.key}
+                  onClick={() => setPaymentMethod(method.key)}
                   style={{
                     flex: 1,
-                    padding: '10px',
+                    padding: '10px 6px',
                     borderRadius: '8px',
                     border:
-                      paymentMethod === method
+                      paymentMethod === method.key
                         ? '2px solid #0d9488'
                         : '1px solid #e8e4dc',
-                    background: paymentMethod === method ? '#e8f5f0' : '#fff',
+                    background: paymentMethod === method.key ? '#e8f5f0' : '#fff',
                     fontWeight: 600,
-                    fontSize: '13px',
-                    textTransform: 'uppercase',
+                    fontSize: '11px',
                     cursor: 'pointer',
                   }}
                 >
-                  {method === 'mpesa' ? 'M-Pesa' : 'Cash'}
+                  {method.label}
                 </button>
               ))}
             </div>
@@ -406,6 +497,62 @@ export default function DebtsPage() {
               </>
             )}
 
+            {paymentMethod === 'mpesa_stk' && (
+              <>
+                <div style={sectionLabel}>Customer Phone</div>
+                <input
+                  type="text"
+                  value={stkPhone}
+                  onChange={(e) => setStkPhone(e.target.value)}
+                  placeholder="e.g. 0712345678"
+                  disabled={stkStatus === 'pending' || stkStatus === 'sending'}
+                  style={{
+                    width: '100%',
+                    padding: '10px 12px',
+                    borderRadius: '8px',
+                    border: '1px solid #e8e4dc',
+                    fontSize: '15px',
+                    marginTop: '6px',
+                    marginBottom: '16px',
+                  }}
+                />
+
+                {stkStatus === 'pending' && (
+                  <div
+                    style={{
+                      background: '#fbf3e0',
+                      color: '#c9a84c',
+                      padding: '12px',
+                      borderRadius: '8px',
+                      fontSize: '13px',
+                      fontWeight: 600,
+                      textAlign: 'center',
+                      marginBottom: '16px',
+                    }}
+                  >
+                    Waiting for customer to approve on their phone...
+                  </div>
+                )}
+
+                {stkStatus === 'success' && (
+                  <div
+                    style={{
+                      background: '#e8f5f0',
+                      color: '#0d9488',
+                      padding: '12px',
+                      borderRadius: '8px',
+                      fontSize: '13px',
+                      fontWeight: 600,
+                      textAlign: 'center',
+                      marginBottom: '16px',
+                    }}
+                  >
+                    ✅ Payment received — updating debt...
+                  </div>
+                )}
+              </>
+            )}
+
             {error && (
               <div style={{ color: '#c0392b', fontSize: '13px', marginBottom: '12px' }}>
                 {error}
@@ -415,6 +562,7 @@ export default function DebtsPage() {
             <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
               <button
                 onClick={closeModal}
+                disabled={stkStatus === 'sending' || stkStatus === 'pending'}
                 style={{
                   flex: 1,
                   padding: '12px',
@@ -422,27 +570,63 @@ export default function DebtsPage() {
                   border: '1px solid #e8e4dc',
                   background: '#fff',
                   fontWeight: 600,
-                  cursor: 'pointer',
+                  cursor:
+                    stkStatus === 'sending' || stkStatus === 'pending'
+                      ? 'not-allowed'
+                      : 'pointer',
+                  opacity: stkStatus === 'sending' || stkStatus === 'pending' ? 0.5 : 1,
                 }}
               >
                 Cancel
               </button>
-              <button
-                onClick={submitPayment}
-                disabled={submitting}
-                style={{
-                  flex: 1,
-                  padding: '12px',
-                  borderRadius: '8px',
-                  border: 'none',
-                  background: submitting ? '#9dcfc8' : '#0d9488',
-                  color: '#fff',
-                  fontWeight: 600,
-                  cursor: submitting ? 'not-allowed' : 'pointer',
-                }}
-              >
-                {submitting ? 'Saving...' : 'Confirm Payment'}
-              </button>
+
+              {paymentMethod === 'mpesa_stk' ? (
+                <button
+                  onClick={triggerSTKPush}
+                  disabled={stkStatus === 'sending' || stkStatus === 'pending' || stkStatus === 'success'}
+                  style={{
+                    flex: 1,
+                    padding: '12px',
+                    borderRadius: '8px',
+                    border: 'none',
+                    background:
+                      stkStatus === 'sending' || stkStatus === 'pending'
+                        ? '#9dcfc8'
+                        : '#0d9488',
+                    color: '#fff',
+                    fontWeight: 600,
+                    cursor:
+                      stkStatus === 'sending' || stkStatus === 'pending'
+                        ? 'not-allowed'
+                        : 'pointer',
+                  }}
+                >
+                  {stkStatus === 'sending'
+                    ? 'Sending...'
+                    : stkStatus === 'pending'
+                    ? 'Waiting...'
+                    : stkStatus === 'success'
+                    ? 'Done'
+                    : 'Send STK Push'}
+                </button>
+              ) : (
+                <button
+                  onClick={submitPayment}
+                  disabled={submitting}
+                  style={{
+                    flex: 1,
+                    padding: '12px',
+                    borderRadius: '8px',
+                    border: 'none',
+                    background: submitting ? '#9dcfc8' : '#0d9488',
+                    color: '#fff',
+                    fontWeight: 600,
+                    cursor: submitting ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  {submitting ? 'Saving...' : 'Confirm Payment'}
+                </button>
+              )}
             </div>
           </div>
         </div>

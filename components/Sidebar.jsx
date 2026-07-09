@@ -1,6 +1,6 @@
 'use client'
 import { usePathname, useRouter } from 'next/navigation'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 const NAV = [
   {
@@ -68,6 +68,13 @@ export default function Sidebar() {
   const pathname = usePathname()
   const router   = useRouter()
   const [pendingCashouts] = useState(2) // will wire to API later
+  const [today, setToday] = useState('')
+
+  useEffect(() => {
+    setToday(new Date().toLocaleDateString('en-KE', {
+      weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
+    }))
+  }, [])
 
   function isActive(path) {
     if (path === '/dashboard') return pathname === '/dashboard'
@@ -78,10 +85,6 @@ export default function Sidebar() {
     await fetch('/api/auth/logout', { method: 'POST' })
     router.push('/login')
   }
-
-  const today = new Date().toLocaleDateString('en-KE', {
-    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
-  })
 
   return (
     <aside style={{

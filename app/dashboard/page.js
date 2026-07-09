@@ -22,6 +22,11 @@ export default function DashboardPage() {
     const t = setInterval(loadDashboard, 30000)
     return () => clearInterval(t)
   }, [loadDashboard])
+  useEffect(() => {
+  setToday(new Date().toLocaleDateString('en-KE', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
+  }))
+}, [])
 
   const rev     = data?.revenue || {}
   const consoles = data?.consoles || []
@@ -50,9 +55,7 @@ export default function DashboardPage() {
   const chartData  = data?.chart || []
   const chartMax   = Math.max(...chartData.map(d => d.total || 0), 1)
 
-  const today = new Date().toLocaleDateString('en-KE', {
-    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
-  })
+const [today, setToday] = useState('')
 
   // Flagged sessions (zero payment on completed sessions)
   const flagged = sessions.filter(s =>
@@ -305,7 +308,7 @@ export default function DashboardPage() {
                         borderRadius: '3px 3px 0 0',
                         transition: 'height 0.3s',
                       }} />
-                      <span style={{ fontSize: '10px', color: '#8a8780',
+                      <span style={{ fontSize: '10px',
                         fontWeight: isToday ? 600 : 400,
                         color: isToday ? '#1a1a1a' : '#8a8780' }}>
                         {d.label}

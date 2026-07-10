@@ -59,16 +59,22 @@ export default function SessionsPage() {
   }
 
   function getAmount() {
-    if (form.rateId === 'custom') return Number(form.customAmount) || 0
+    if (needsManualAmount()) return Number(form.customAmount) || 0
     const rate = rates.find(r => r.id === form.rateId)
     return rate ? Number(rate.price) : 0
+  }
+
+  function needsManualAmount() {
+    if (form.rateId === 'custom') return true
+    const rate = rates.find(r => r.id === form.rateId)
+    return rate && Number(rate.price) === 0
   }
 
   async function startSession() {
     if (!form.rateId) { setError('Select a rate'); return }
     const amount = getAmount()
-    if (form.rateId === 'custom' && !amount) {
-      setError('Enter an amount'); return
+    if (needsManualAmount() && amount <= 0) {
+      setError('Enter an amount before starting — this can\'t be set later'); return
     }
     setSaving(true); setError('')
     try {
@@ -376,7 +382,7 @@ export default function SessionsPage() {
                 </div>
               </div>
 
-              {form.rateId === 'custom' && (
+              {needsManualAmount() && (
                 <div>
                   <label style={{ color: 'rgba(255,255,255,0.45)', fontSize: '11px',
                     fontWeight: 600, textTransform: 'uppercase',

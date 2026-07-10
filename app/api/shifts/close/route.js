@@ -1,5 +1,3 @@
-
-
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
 
@@ -15,7 +13,6 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Shift ID required' }, { status: 400 })
     }
 
-    // Need the shift's opened_at to know the time window for debt payments
     const { data: shift, error: shiftError } = await supabase
       .from('shifts')
       .select('opened_at')
@@ -26,7 +23,28 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Shift not found' }, { status: 404 })
     }
 
-    // Completed sessions for this shift
+    // Block closing the shift while any session under it is still active.
+    // Staff must end (or force-close, if genuinely stuck) every session
+    // first — prevents a shift from closing with an unaccounted-for
+    // open bay, which was leaving the "still active" issue you kept hitting.
+    const { data: activeSessions } = await supabase
+      .from('game_sessions')
+      .select('id, console_id, consoles(name)')
+      .eq('shift_id', shiftId)
+      .eq('status', 'active')
+
+    if (activeSessions?.length) {
+      const bayNames = activeSessions
+        .map(s => s.consoles?.name || 'a bay')
+        .join(', ')
+      return NextResponse.json(
+        {
+          error: `Can't close shift — ${activeSessions.length} session${activeSessions.length > 1 ? 's are' : ' is'} still active (${bayNames}). End or force-close ${activeSessions.length > 1 ? 'them' : 'it'} first.`,
+        },
+        { status: 409 }
+      )
+    }
+
     const { data: sessions } = await supabase
       .from('game_sessions')
       .select('payment_method, amount')
@@ -39,19 +57,10 @@ export async function POST(request) {
       if (s.payment_method === 'cash') {
         cashExpected += Number(s.amount)
       } else if (s.payment_method === 'mpesa' || s.payment_method === 'mpesa_stk') {
-        // mpesa_stk previously fell through uncounted — now treated
-        // the same as manual mpesa for reconciliation purposes.
         mpesaExpected += Number(s.amount)
       }
     })
 
-    // Debt repayments collected during this shift's time window.
-    // Note: debts only store a running amount_paid total (no per-payment
-    // log or shift linkage), so this is an approximation based on when
-    // each debt was last updated — same limitation as the Income page.
-    // If a debt received multiple partial payments across different
-    // shifts, only the most recent payment's timing is reflected.
-    // testing is my git hundles saving ignore this comment
     const { data: debtPayments } = await supabase
       .from('debts')
       .select('amount_paid, last_payment_method, updated_at')
@@ -97,7 +106,3 @@ export async function POST(request) {
     return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }
 }
-
-
-
-

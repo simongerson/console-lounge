@@ -8,7 +8,7 @@ const supabase = createClient(
 
 export async function POST(request) {
   try {
-    const { sessionId, consoleId, paymentMethod, mpesaRef } = await request.json()
+    const { sessionId, consoleId, paymentMethod, mpesaRef, amount } = await request.json()
 
     const { data: session } = await supabase
       .from('game_sessions')
@@ -25,14 +25,19 @@ export async function POST(request) {
     const diffMins = Math.ceil((now - started) / 60000)
     const isDebt   = paymentMethod === 'debt'
 
-    // Debt sessions are marked 'debt' (not 'completed') so they don't
-    // count as collected revenue until actually paid off via the Debts
-    // page. Every other payment method marks the session 'completed'.
+    // Staff can now adjust the final amount at end (fixes Manual/Open
+    // rate sessions that started at 0). Falls back to the session's
+    // existing amount if none was sent, for backward compatibility.
+    const finalAmount = amount !== undefined && amount !== null
+      ? Number(amount)
+      : Number(session.amount)
+
     const updates = {
       ended_at:         now.toISOString(),
       duration_minutes: diffMins,
       status:           isDebt ? 'debt' : 'completed',
       payment_method:   paymentMethod || session.payment_method,
+      amount:           finalAmount,
     }
 
     if (mpesaRef !== undefined && mpesaRef !== null) {
@@ -41,24 +46,21 @@ export async function POST(request) {
 
     await supabase.from('game_sessions').update(updates).eq('id', sessionId)
 
-    // The console is always freed on end, regardless of payment method —
-    // the customer is done playing either way, they just may owe money.
     await supabase.from('consoles')
       .update({ status: 'open' }).eq('id', consoleId)
 
-    // Create the debt record now, since Debt is chosen at end, not start.
-    if (isDebt && Number(session.amount) > 0) {
+    if (isDebt && finalAmount > 0) {
       await supabase.from('debts').insert({
         game_session_id: sessionId,
         customer_name:   session.customer_name || 'Unknown',
         customer_phone:  session.customer_phone || null,
-        amount:          session.amount,
+        amount:          finalAmount,
         status:          'outstanding',
       })
     }
 
     return NextResponse.json({
-      success: true, duration: diffMins, amount: session.amount,
+      success: true, duration: diffMins, amount: finalAmount,
     })
   } catch (err) {
     console.error(err)

@@ -8,6 +8,7 @@ function EndSessionContent() {
   const [mpesaRef, setMpesaRef] = useState('')
   const [error, setError]       = useState('')
   const [session, setSession]   = useState(null)
+  const [amountCharged, setAmountCharged] = useState('')
   const router       = useRouter()
   const searchParams = useSearchParams()
 
@@ -15,9 +16,8 @@ function EndSessionContent() {
   const consoleId   = searchParams.get('consoleId')
   const consoleName = searchParams.get('consoleName') || 'Bay'
 
-  // STK push state
   const [stkPhone, setStkPhone]           = useState('')
-  const [stkStatus, setStkStatus]         = useState('idle') // idle | sending | pending | success | failed
+  const [stkStatus, setStkStatus]         = useState('idle')
   const [stkCheckoutId, setStkCheckoutId] = useState(null)
 
   useEffect(() => {
@@ -31,6 +31,7 @@ function EndSessionContent() {
       const data = await res.json()
       if (data.session) {
         setSession(data.session)
+        setAmountCharged(String(data.session.amount || ''))
         if (data.session.customer_phone) setStkPhone(data.session.customer_phone)
       }
     } catch {}
@@ -43,14 +44,22 @@ function EndSessionContent() {
     return `${Math.floor(diff / 60)}h ${diff % 60}m`
   }
 
-  // Cash / Debt / manual M-Pesa path — finalizes the session directly.
+  function getAmount() {
+    return Number(amountCharged) || 0
+  }
+
   async function endSession(paymentMethodOverride, mpesaRefOverride) {
     const method = paymentMethodOverride || payment
     const ref    = mpesaRefOverride !== undefined ? mpesaRefOverride : mpesaRef
+    const amount = getAmount()
 
+    if (!amount || amount <= 0) {
+      setError('Enter the amount to charge'); return
+    }
     if (method === 'mpesa' && ref.length !== 10) {
       setError('Enter a valid 10-character M-Pesa code'); return
     }
+
     setSaving(true); setError('')
     try {
       const res  = await fetch('/api/sessions/end', {
@@ -59,6 +68,7 @@ function EndSessionContent() {
         body: JSON.stringify({
           sessionId, consoleId,
           paymentMethod: method,
+          amount,
           mpesaRef: method === 'mpesa' ? ref : undefined,
         }),
       })
@@ -71,9 +81,11 @@ function EndSessionContent() {
     }
   }
 
-  // M-Pesa STK Push path — sends the prompt, waits for confirmation,
-  // then finalizes the session once payment is confirmed.
   async function endSessionWithSTK() {
+    const amount = getAmount()
+    if (!amount || amount <= 0) {
+      setError('Enter the amount to charge'); return
+    }
     if (!stkPhone || stkPhone.trim().length < 9) {
       setError("Enter the customer's phone number for the STK push"); return
     }
@@ -86,7 +98,7 @@ function EndSessionContent() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           phone: stkPhone,
-          amount: session?.amount || 0,
+          amount,
           accountReference: session?.customer_name || consoleName,
           transactionDesc: `${consoleName} session payment`,
           source: 'session',
@@ -104,7 +116,6 @@ function EndSessionContent() {
     }
   }
 
-  // Poll while an STK push is pending, then finalize the session on success.
   useEffect(() => {
     if (stkStatus !== 'pending' || !stkCheckoutId) return
 
@@ -116,9 +127,6 @@ function EndSessionContent() {
         if (data.status === 'success') {
           setStkStatus('success')
           clearInterval(interval)
-          // Finalize the session now that payment is confirmed.
-          // mpesaRef is left undefined so the end route doesn't overwrite
-          // the receipt number the callback already saved.
           await endSession('mpesa_stk', undefined)
         } else if (data.status === 'failed') {
           setStkStatus('failed')
@@ -153,7 +161,6 @@ function EndSessionContent() {
 
       <div className="relative z-10 w-full max-w-sm">
 
-        {/* Header */}
         <div style={{ textAlign: 'center', marginBottom: '24px' }}>
           <h1 style={{ color: '#fff', fontSize: '22px', fontWeight: 700, margin: '0 0 4px' }}>
             End Session
@@ -163,7 +170,6 @@ function EndSessionContent() {
           </p>
         </div>
 
-        {/* Session summary card */}
         <div style={{
           background: 'rgba(13,148,136,0.08)',
           border: '1px solid rgba(13,148,136,0.25)',
@@ -183,22 +189,33 @@ function EndSessionContent() {
                   👤 {session.customer_name}
                 </p>
               )}
-              <div style={{
-                borderTop: '1px solid rgba(255,255,255,0.08)',
-                paddingTop: '12px', marginTop: '4px',
-              }}>
-                <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px', margin: '0 0 4px' }}>
-                  Amount charged
-                </p>
-                <p style={{ color: '#0d9488', fontSize: '28px', fontWeight: 700, margin: 0 }}>
-                  KES {Number(session.amount || 0).toLocaleString()}
-                </p>
-              </div>
             </>
           )}
         </div>
 
-        {/* Payment method */}
+        <div style={{ marginBottom: '16px' }}>
+          <label style={{ color: 'rgba(255,255,255,0.45)', fontSize: '11px',
+            fontWeight: 600, textTransform: 'uppercase',
+            letterSpacing: '1px', display: 'block', marginBottom: '8px' }}>
+            Amount to charge (KES)
+          </label>
+          <input type="number" value={amountCharged}
+            onChange={e => setAmountCharged(e.target.value)}
+            placeholder="0"
+            disabled={stkBusy}
+            style={{
+              width: '100%', boxSizing: 'border-box',
+              background: 'rgba(255,255,255,0.06)',
+              border: '1px solid rgba(255,255,255,0.1)',
+              borderRadius: '12px', padding: '14px',
+              color: '#0d9488', fontSize: '28px',
+              fontWeight: 700, textAlign: 'center', outline: 'none',
+            }}
+            onFocus={e => e.target.style.border = '1px solid rgba(13,148,136,0.7)'}
+            onBlur={e => e.target.style.border = '1px solid rgba(255,255,255,0.1)'}
+          />
+        </div>
+
         <div style={{ marginBottom: '16px' }}>
           <label style={{ color: 'rgba(255,255,255,0.45)', fontSize: '11px',
             fontWeight: 600, textTransform: 'uppercase',
@@ -232,7 +249,6 @@ function EndSessionContent() {
           </div>
         </div>
 
-        {/* M-Pesa manual ref */}
         {payment === 'mpesa' && (
           <div style={{ marginBottom: '16px' }}>
             <label style={{ color: 'rgba(255,255,255,0.45)', fontSize: '11px',
@@ -260,7 +276,6 @@ function EndSessionContent() {
           </div>
         )}
 
-        {/* M-Pesa STK push */}
         {payment === 'mpesa_stk' && (
           <div style={{ marginBottom: '16px' }}>
             <label style={{ color: 'rgba(255,255,255,0.45)', fontSize: '11px',
@@ -321,7 +336,6 @@ function EndSessionContent() {
           </div>
         )}
 
-        {/* Buttons */}
         {payment === 'mpesa_stk' ? (
           <button onClick={endSessionWithSTK}
             disabled={stkBusy || stkStatus === 'success'}

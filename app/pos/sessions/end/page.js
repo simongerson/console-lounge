@@ -193,23 +193,37 @@ function EndSessionContent() {
           )}
         </div>
 
+        {/* Amount is LOCKED if a real price was already set at session
+            start — prevents staff from quietly lowering the charge at
+            checkout. Only editable for sessions that started with the
+            "Open (Manual)" rate, which has no fixed price by design. */}
         <div style={{ marginBottom: '16px' }}>
           <label style={{ color: 'rgba(255,255,255,0.45)', fontSize: '11px',
             fontWeight: 600, textTransform: 'uppercase',
             letterSpacing: '1px', display: 'block', marginBottom: '8px' }}>
             Amount to charge (KES)
+            {session && Number(session.amount) > 0 && (
+              <span style={{ color: 'rgba(255,255,255,0.25)', fontWeight: 400,
+                textTransform: 'none', marginLeft: '6px' }}>
+                — set at session start
+              </span>
+            )}
           </label>
           <input type="number" value={amountCharged}
             onChange={e => setAmountCharged(e.target.value)}
             placeholder="0"
-            disabled={stkBusy}
+            disabled={stkBusy || (session && Number(session.amount) > 0)}
             style={{
               width: '100%', boxSizing: 'border-box',
-              background: 'rgba(255,255,255,0.06)',
+              background: (session && Number(session.amount) > 0)
+                ? 'rgba(255,255,255,0.02)' : 'rgba(255,255,255,0.06)',
               border: '1px solid rgba(255,255,255,0.1)',
               borderRadius: '12px', padding: '14px',
-              color: '#0d9488', fontSize: '28px',
+              color: (session && Number(session.amount) > 0)
+                ? 'rgba(13,148,136,0.6)' : '#0d9488',
+              fontSize: '28px',
               fontWeight: 700, textAlign: 'center', outline: 'none',
+              cursor: (session && Number(session.amount) > 0) ? 'not-allowed' : 'text',
             }}
             onFocus={e => e.target.style.border = '1px solid rgba(13,148,136,0.7)'}
             onBlur={e => e.target.style.border = '1px solid rgba(255,255,255,0.1)'}

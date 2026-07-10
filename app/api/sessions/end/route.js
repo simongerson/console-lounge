@@ -23,14 +23,15 @@ export async function POST(request) {
     const now      = new Date()
     const started  = new Date(session.started_at)
     const diffMins = Math.ceil((now - started) / 60000)
+    const isDebt   = paymentMethod === 'debt'
 
-    // Build the update object conditionally so we never accidentally
-    // wipe out an mpesa_ref that was already saved by the M-Pesa callback
-    // (e.g. for the STK push flow, where mpesaRef isn't passed here).
+    // Debt sessions are marked 'debt' (not 'completed') so they don't
+    // count as collected revenue until actually paid off via the Debts
+    // page. Every other payment method marks the session 'completed'.
     const updates = {
       ended_at:         now.toISOString(),
       duration_minutes: diffMins,
-      status:           'completed',
+      status:           isDebt ? 'debt' : 'completed',
       payment_method:   paymentMethod || session.payment_method,
     }
 
@@ -40,8 +41,21 @@ export async function POST(request) {
 
     await supabase.from('game_sessions').update(updates).eq('id', sessionId)
 
+    // The console is always freed on end, regardless of payment method —
+    // the customer is done playing either way, they just may owe money.
     await supabase.from('consoles')
       .update({ status: 'open' }).eq('id', consoleId)
+
+    // Create the debt record now, since Debt is chosen at end, not start.
+    if (isDebt && Number(session.amount) > 0) {
+      await supabase.from('debts').insert({
+        game_session_id: sessionId,
+        customer_name:   session.customer_name || 'Unknown',
+        customer_phone:  session.customer_phone || null,
+        amount:          session.amount,
+        status:          'outstanding',
+      })
+    }
 
     return NextResponse.json({
       success: true, duration: diffMins, amount: session.amount,

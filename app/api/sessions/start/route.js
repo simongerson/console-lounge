@@ -6,10 +6,14 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
+// POST /api/sessions/start
+// Payment is no longer collected at start — every session starts the
+// same way (active, no payment_method yet) and payment (cash, manual
+// M-Pesa, M-Pesa STK Push, or Debt) is decided at End Session instead.
 export async function POST(request) {
   try {
     const { consoleId, staffId, shiftId, rateId, amount,
-            paymentMethod, customerName, customerPhone, notes } = await request.json()
+            customerName, customerPhone, notes } = await request.json()
 
     if (!consoleId || !staffId || !shiftId) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
@@ -29,8 +33,6 @@ export async function POST(request) {
       )
     }
 
-    const isDebt = paymentMethod === 'debt'
-
     const { data: session, error } = await supabase
       .from('game_sessions')
       .insert({
@@ -41,8 +43,8 @@ export async function POST(request) {
         customer_name:  customerName || null,
         customer_phone: customerPhone || null,
         amount:         amount || 0,
-        payment_method: paymentMethod || 'cash',
-        status:         isDebt ? 'debt' : 'active',
+        payment_method: null, // decided at end, not at start
+        status:         'active',
         notes:          notes || null,
       })
       .select()
@@ -50,20 +52,10 @@ export async function POST(request) {
 
     if (error) throw error
 
-    // Mark console active
+    // Every session now ties up the console, since payment (including
+    // Debt) is only ever decided at the end.
     await supabase.from('consoles')
       .update({ status: 'active' }).eq('id', consoleId)
-
-    // Create debt record
-    if (isDebt && amount > 0) {
-      await supabase.from('debts').insert({
-        game_session_id: session.id,
-        customer_name:   customerName || 'Unknown',
-        customer_phone:  customerPhone || null,
-        amount:          amount,
-        status:          'outstanding',
-      })
-    }
 
     return NextResponse.json({ success: true, sessionId: session.id })
   } catch (err) {

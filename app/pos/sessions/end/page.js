@@ -57,6 +57,7 @@ function EndSessionContent() {
       setError('This session has no price set and amount can no longer be edited here. Contact a manager to fix it in the system before ending this session.')
       return
     }
+    if (method === 'mpesa' && ref.length !== 10) {
       setError('Enter a valid 10-character M-Pesa code'); return
     }
 

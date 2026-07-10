@@ -8,8 +8,8 @@ const supabase = createClient(
 
 // POST /api/sessions/start
 // Payment is no longer collected at start — every session starts the
-// same way (active, no payment_method yet) and payment (cash, manual
-// M-Pesa, M-Pesa STK Push, or Debt) is decided at End Session instead.
+// same way (active, payment TBD) and payment (cash, manual M-Pesa,
+// M-Pesa STK Push, or Debt) is decided at End Session instead.
 export async function POST(request) {
   try {
     const { consoleId, staffId, shiftId, rateId, amount,
@@ -19,7 +19,6 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
     }
 
-    // Check not already active
     const { data: active } = await supabase
       .from('game_sessions')
       .select('id')
@@ -43,7 +42,11 @@ export async function POST(request) {
         customer_name:  customerName || null,
         customer_phone: customerPhone || null,
         amount:         amount || 0,
-        payment_method: null, // decided at end, not at start
+        // Using 'pending' instead of null — the payment_method column
+        // likely has a NOT NULL constraint from its original design
+        // (when payment was always chosen at start). 'pending' is a
+        // clear placeholder that gets overwritten at End Session.
+        payment_method: 'pending',
         status:         'active',
         notes:          notes || null,
       })
@@ -52,14 +55,12 @@ export async function POST(request) {
 
     if (error) throw error
 
-    // Every session now ties up the console, since payment (including
-    // Debt) is only ever decided at the end.
     await supabase.from('consoles')
       .update({ status: 'active' }).eq('id', consoleId)
 
     return NextResponse.json({ success: true, sessionId: session.id })
   } catch (err) {
     console.error(err)
-    return NextResponse.json({ error: 'Server error' }, { status: 500 })
+    return NextResponse.json({ error: err.message || 'Server error' }, { status: 500 })
   }
 }

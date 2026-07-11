@@ -29,15 +29,3 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-export async function GET(request, { params }) {
-  try {
-    const { data } = await supabase
-      .from('game_sessions')
-      .select('*')
-      .eq('id', params.id)
-      .single()
-    return NextResponse.json({ session: data || null })
-  } catch (err) {
-    return NextResponse.json({ session: null })
-  }
-}

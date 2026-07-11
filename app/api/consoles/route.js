@@ -6,6 +6,13 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
+// Precautionary — no confirmed staleness bug here, but this is the
+// same category of Next.js GET-route caching we found and fixed on
+// the M-Pesa status route. Cheap to close off entirely rather than
+// rely on this route's polling pattern happening to avoid it.
+export const dynamic = 'force-dynamic'
+export const fetchCache = 'force-no-store'
+
 export async function GET() {
   try {
     const { data: consoles } = await supabase
@@ -14,7 +21,6 @@ export async function GET() {
       .eq('is_active', true)
       .order('sort_order', { ascending: true })
 
-    // Get active sessions for each console
     const { data: activeSessions } = await supabase
       .from('game_sessions')
       .select('*, session_rates(name, duration_minutes)')

@@ -8,7 +8,7 @@ const supabase = createClient(
 
 export async function POST(request) {
   try {
-    const { sessionId, consoleId, paymentMethod, mpesaRef, amount } = await request.json()
+    const { sessionId, consoleId, paymentMethod, mpesaRef } = await request.json()
 
     const { data: session } = await supabase
       .from('game_sessions')
@@ -25,19 +25,27 @@ export async function POST(request) {
     const diffMins = Math.ceil((now - started) / 60000)
     const isDebt   = paymentMethod === 'debt'
 
-    // Staff can now adjust the final amount at end (fixes Manual/Open
-    // rate sessions that started at 0). Falls back to the session's
-    // existing amount if none was sent, for backward compatibility.
-    const finalAmount = amount !== undefined && amount !== null
-      ? Number(amount)
-      : Number(session.amount)
+    // IMPORTANT: the amount is NEVER taken from the request body here.
+    // It's locked in permanently at session start (server-validated
+    // there to be > 0) and the UI no longer offers any way to edit it
+    // at end. If this route accepted a client-supplied amount, that
+    // whole anti-fraud lock would be pointless — anyone could bypass
+    // the UI with a direct API call and charge less than what was
+    // actually agreed. Always trust only what's already in the database.
+    const finalAmount = Number(session.amount)
+
+    if (!finalAmount || finalAmount <= 0) {
+      return NextResponse.json(
+        { error: 'This session has no valid price on record. A manager needs to fix it directly in the database before it can be ended.' },
+        { status: 409 }
+      )
+    }
 
     const updates = {
       ended_at:         now.toISOString(),
       duration_minutes: diffMins,
       status:           isDebt ? 'debt' : 'completed',
       payment_method:   paymentMethod || session.payment_method,
-      amount:           finalAmount,
     }
 
     if (mpesaRef !== undefined && mpesaRef !== null) {
@@ -49,7 +57,7 @@ export async function POST(request) {
     await supabase.from('consoles')
       .update({ status: 'open' }).eq('id', consoleId)
 
-    if (isDebt && finalAmount > 0) {
+    if (isDebt) {
       await supabase.from('debts').insert({
         game_session_id: sessionId,
         customer_name:   session.customer_name || 'Unknown',

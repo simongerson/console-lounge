@@ -7,9 +7,12 @@ const supabase = createClient(
 )
 
 // POST /api/sessions/start
-// Payment is no longer collected at start — every session starts the
-// same way (active, payment TBD) and payment (cash, manual M-Pesa,
-// M-Pesa STK Push, or Debt) is decided at End Session instead.
+// Payment method is decided at End Session, but the AMOUNT is locked
+// in right here at start and can never be edited later — this is the
+// anti-fraud control. That means amount must be enforced server-side,
+// not just in the UI, or someone could bypass it (frontend bug, a
+// direct API call, a race during deploy, etc.) and create a session
+// that can never be charged correctly.
 export async function POST(request) {
   try {
     const { consoleId, staffId, shiftId, rateId, amount,
@@ -17,6 +20,14 @@ export async function POST(request) {
 
     if (!consoleId || !staffId || !shiftId) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
+    }
+
+    const numericAmount = Number(amount)
+    if (!numericAmount || numericAmount <= 0) {
+      return NextResponse.json(
+        { error: 'A valid amount greater than 0 is required to start a session' },
+        { status: 400 }
+      )
     }
 
     const { data: active } = await supabase
@@ -41,11 +52,7 @@ export async function POST(request) {
         rate_id:        rateId || null,
         customer_name:  customerName || null,
         customer_phone: customerPhone || null,
-        amount:         amount || 0,
-        // Using 'pending' instead of null — the payment_method column
-        // likely has a NOT NULL constraint from its original design
-        // (when payment was always chosen at start). 'pending' is a
-        // clear placeholder that gets overwritten at End Session.
+        amount:         numericAmount,
         payment_method: 'pending',
         status:         'active',
         notes:          notes || null,

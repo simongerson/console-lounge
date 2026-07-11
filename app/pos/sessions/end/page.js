@@ -24,17 +24,25 @@ function EndSessionContent() {
     loadSession()
   }, [sessionId])
 
-  async function loadSession() {
-    try {
-      const res  = await fetch(`/api/sessions/${sessionId}`)
-      const data = await res.json()
-      if (data.session) {
-        setSession(data.session)
-        setAmountCharged(String(data.session.amount || ''))
-        if (data.session.customer_phone) setStkPhone(data.session.customer_phone)
-      }
-    } catch {}
-  }
+async function loadSession() {
+  try {
+    const res  = await fetch(`/api/sessions/${sessionId}`)
+    const data = await res.json()
+    if (data.session) {
+      setSession(data.session)
+
+      // Use stored amount first, fall back to rate price if 0
+      const amount = Number(data.session.amount) > 0
+        ? data.session.amount
+        : Number(data.session.rate_price) > 0
+          ? data.session.rate_price
+          : 0
+
+      setAmountCharged(String(amount))
+      if (data.session.customer_phone) setStkPhone(data.session.customer_phone)
+    }
+  } catch {}
+}
 
   function timeElapsed(startedAt) {
     if (!startedAt) return '0m'
@@ -205,16 +213,23 @@ function EndSessionContent() {
               — set at session start
             </span>
           </label>
-          <div style={{
-            width: '100%', boxSizing: 'border-box',
-            background: 'rgba(255,255,255,0.02)',
-            border: '1px solid rgba(255,255,255,0.1)',
-            borderRadius: '12px', padding: '14px',
-            color: 'rgba(13,148,136,0.7)', fontSize: '28px',
-            fontWeight: 700, textAlign: 'center',
-          }}>
-            {Number(amountCharged || 0).toLocaleString()}
-          </div>
+
+<div style={{
+  width: '100%', boxSizing: 'border-box',
+  background: 'rgba(255,255,255,0.02)',
+  border: '1px solid rgba(255,255,255,0.1)',
+  borderRadius: '12px', padding: '14px',
+  color: 'rgba(13,148,136,0.7)', fontSize: '28px',
+  fontWeight: 700, textAlign: 'center',
+}}>
+  {Number(amountCharged || 0).toLocaleString()}
+</div>
+{session?.rate_name && (
+  <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: '12px',
+    textAlign: 'center', margin: '6px 0 0' }}>
+    {session.rate_name}
+  </p>
+)}
         </div>
 
         <div style={{ marginBottom: '16px' }}>

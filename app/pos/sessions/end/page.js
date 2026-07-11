@@ -5,7 +5,6 @@ import { useRouter, useSearchParams } from 'next/navigation'
 function EndSessionContent() {
   const [loading, setSaving]    = useState(false)
   const [payment, setPayment]   = useState('cash')
-  const [mpesaRef, setMpesaRef] = useState('')
   const [error, setError]       = useState('')
   const [session, setSession]   = useState(null)
   const [amountCharged, setAmountCharged] = useState('')
@@ -50,15 +49,11 @@ function EndSessionContent() {
 
   async function endSession(paymentMethodOverride, mpesaRefOverride) {
     const method = paymentMethodOverride || payment
-    const ref    = mpesaRefOverride !== undefined ? mpesaRefOverride : mpesaRef
     const amount = getAmount()
 
     if (!amount || amount <= 0) {
       setError('This session has no price set and amount can no longer be edited here. Contact a manager to fix it in the system before ending this session.')
       return
-    }
-    if (method === 'mpesa' && ref.length !== 10) {
-      setError('Enter a valid 10-character M-Pesa code'); return
     }
 
     setSaving(true); setError('')
@@ -70,7 +65,7 @@ function EndSessionContent() {
           sessionId, consoleId,
           paymentMethod: method,
           amount,
-          mpesaRef: method === 'mpesa' ? ref : undefined,
+          mpesaRef: mpesaRefOverride,
         }),
       })
       const data = await res.json()
@@ -228,15 +223,14 @@ function EndSessionContent() {
             letterSpacing: '1px', display: 'block', marginBottom: '8px' }}>
             Payment received via
           </label>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: '8px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '8px' }}>
             {[
               { key: 'cash',      label: '💵 Cash' },
-              { key: 'mpesa',     label: '📱 M-Pesa (Manual)' },
-              { key: 'mpesa_stk', label: '📲 M-Pesa (STK Push)' },
+              { key: 'mpesa_stk', label: '📱 M-Pesa' },
               { key: 'debt',      label: '📋 Debt' },
             ].map(m => (
               <button key={m.key}
-                onClick={() => { setPayment(m.key); setMpesaRef(''); setError('') }}
+                onClick={() => { setPayment(m.key); setError('') }}
                 disabled={stkBusy}
                 style={{
                   padding: '12px 8px', borderRadius: '10px',
@@ -254,33 +248,6 @@ function EndSessionContent() {
             ))}
           </div>
         </div>
-
-        {payment === 'mpesa' && (
-          <div style={{ marginBottom: '16px' }}>
-            <label style={{ color: 'rgba(255,255,255,0.45)', fontSize: '11px',
-              fontWeight: 600, textTransform: 'uppercase',
-              letterSpacing: '1px', display: 'block', marginBottom: '6px' }}>
-              M-Pesa confirmation code
-            </label>
-            <input type="text" value={mpesaRef}
-              onChange={e => setMpesaRef(
-                e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10)
-              )}
-              placeholder="e.g. QHX2K19A3P"
-              style={{
-                width: '100%', boxSizing: 'border-box',
-                background: 'rgba(255,255,255,0.06)',
-                border: '1px solid rgba(255,255,255,0.1)',
-                borderRadius: '10px', padding: '12px 14px',
-                color: '#fff', fontSize: '15px', fontWeight: 600,
-                fontFamily: 'monospace', letterSpacing: '2px',
-                textAlign: 'center', outline: 'none',
-              }}
-              onFocus={e => e.target.style.border = '1px solid rgba(13,148,136,0.7)'}
-              onBlur={e => e.target.style.border = '1px solid rgba(255,255,255,0.1)'}
-            />
-          </div>
-        )}
 
         {payment === 'mpesa_stk' && (
           <div style={{ marginBottom: '16px' }}>

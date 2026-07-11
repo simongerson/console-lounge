@@ -80,10 +80,6 @@ export default function DebtsPage() {
       setError('Amount cannot exceed the outstanding balance');
       return;
     }
-    if (paymentMethod === 'mpesa' && mpesaRef.trim().length !== 10) {
-      setError('M-Pesa reference must be 10 characters');
-      return;
-    }
 
     setSubmitting(true);
     try {
@@ -93,7 +89,7 @@ export default function DebtsPage() {
         body: JSON.stringify({
           amountPaid: amount,
           paymentMethod,
-          mpesaRef: paymentMethod === 'mpesa' ? mpesaRef : null,
+          mpesaRef: null,
         }),
       });
 
@@ -165,17 +161,20 @@ export default function DebtsPage() {
           setStkStatus('success');
           clearInterval(interval);
           fetchDebts();
+          // Auto-close after showing success briefly
           setTimeout(() => closeModal(), 1500);
         } else if (data.status === 'failed') {
           setStkStatus('failed');
           setError(data.resultDesc || 'Payment was not completed');
           clearInterval(interval);
         }
+        // if still 'pending', keep polling
       } catch (err) {
         console.error('Status poll error:', err);
       }
     }, 3000);
 
+    // Stop polling after 2 minutes regardless (STK prompts expire)
     const timeout = setTimeout(() => {
       clearInterval(interval);
       if (stkStatus === 'pending') {
@@ -228,6 +227,7 @@ export default function DebtsPage() {
         Debts
       </h1>
 
+      {/* Summary cards */}
       {summary && (
         <div
           style={{
@@ -264,6 +264,7 @@ export default function DebtsPage() {
         </div>
       )}
 
+      {/* Filter tabs */}
       <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
         {['all', 'outstanding', 'partial', 'cleared'].map((s) => (
           <button
@@ -286,6 +287,7 @@ export default function DebtsPage() {
         ))}
       </div>
 
+      {/* Debts table */}
       <div style={{ ...cardStyle, padding: 0, overflow: 'hidden' }}>
         {loading ? (
           <div style={{ padding: '40px', textAlign: 'center', color: '#8a8780' }}>
@@ -398,6 +400,7 @@ export default function DebtsPage() {
         )}
       </div>
 
+      {/* Payment modal */}
       {selectedDebt && (
         <div
           style={{
@@ -449,8 +452,7 @@ export default function DebtsPage() {
             <div style={{ display: 'flex', gap: '8px', marginTop: '6px', marginBottom: '16px' }}>
               {[
                 { key: 'cash', label: 'Cash' },
-                { key: 'mpesa', label: 'M-Pesa (Manual)' },
-                { key: 'mpesa_stk', label: 'M-Pesa (STK Push)' },
+                { key: 'mpesa_stk', label: 'M-Pesa' },
               ].map((method) => (
                 <button
                   key={method.key}
@@ -473,29 +475,6 @@ export default function DebtsPage() {
                 </button>
               ))}
             </div>
-
-            {paymentMethod === 'mpesa' && (
-              <>
-                <div style={sectionLabel}>M-Pesa Reference</div>
-                <input
-                  type="text"
-                  maxLength={10}
-                  value={mpesaRef}
-                  onChange={(e) => setMpesaRef(e.target.value.toUpperCase())}
-                  placeholder="e.g. QJI4XXXXXX"
-                  style={{
-                    width: '100%',
-                    padding: '10px 12px',
-                    borderRadius: '8px',
-                    border: '1px solid #e8e4dc',
-                    fontSize: '15px',
-                    marginTop: '6px',
-                    marginBottom: '16px',
-                    textTransform: 'uppercase',
-                  }}
-                />
-              </>
-            )}
 
             {paymentMethod === 'mpesa_stk' && (
               <>

@@ -602,6 +602,36 @@ export default function SessionsPage() {
           </div>
         </div>
       )}
+
+      {/* Bottom nav — Sales / Debts / End Shift, scoped to this staff
+          member's current shift */}
+      <div style={{
+        position: 'fixed', bottom: 0, left: 0, right: 0,
+        background: '#141414', borderTop: '1px solid rgba(13,148,136,0.15)',
+        display: 'flex', zIndex: 20,
+      }}>
+        {[
+          { label: 'Sales', icon: '🧾', path: '/pos/sales' },
+          { label: 'Debts', icon: '🛡️', path: '/pos/debts' },
+          { label: 'End Shift', icon: '⏻', path: '/pos/shift-close', danger: true },
+        ].map(item => (
+          <button key={item.label}
+            onClick={() => router.push(item.path)}
+            style={{
+              flex: 1, background: 'none', border: 'none',
+              padding: '12px 8px', display: 'flex', flexDirection: 'column',
+              alignItems: 'center', gap: '2px', cursor: 'pointer',
+            }}>
+            <span style={{ fontSize: '16px' }}>{item.icon}</span>
+            <span style={{
+              fontSize: '11px', fontWeight: 600,
+              color: item.danger ? '#f87171' : 'rgba(255,255,255,0.5)',
+            }}>
+              {item.label}
+            </span>
+          </button>
+        ))}
+      </div>
     </div>
   )
 }

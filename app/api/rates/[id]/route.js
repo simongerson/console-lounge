@@ -8,6 +8,13 @@ const supabase = createClient(
 
 export async function PATCH(request, { params }) {
   try {
+    const resolvedParams = await params
+    const id = resolvedParams.id
+
+    if (!id) {
+      return NextResponse.json({ error: 'Missing rate id' }, { status: 400 })
+    }
+
     const body = await request.json()
     const updates = {}
 
@@ -24,19 +31,45 @@ export async function PATCH(request, { params }) {
     }
 
     const { error } = await supabase
-      .from('session_rates').update(updates).eq('id', params.id)
+      .from('session_rates').update(updates).eq('id', id)
     if (error) throw error
     return NextResponse.json({ success: true })
   } catch (err) {
+    console.error('PATCH /api/rates/[id] error:', err)
     return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }
 }
 
 export async function DELETE(request, { params }) {
   try {
-    await supabase.from('session_rates').delete().eq('id', params.id)
+    const resolvedParams = await params
+    const id = resolvedParams.id
+
+    if (!id) {
+      return NextResponse.json({ error: 'Missing rate id' }, { status: 400 })
+    }
+
+    const { error } = await supabase
+      .from('session_rates')
+      .delete()
+      .eq('id', id)
+
+    if (error) {
+      if (error.code === '23503') {
+        return NextResponse.json(
+          {
+            error:
+              'This rate has been used in past sessions and can\'t be deleted. Disable it instead to hide it from staff without losing session history.',
+          },
+          { status: 409 }
+        )
+      }
+      throw error
+    }
+
     return NextResponse.json({ success: true })
   } catch (err) {
+    console.error('DELETE /api/rates/[id] error:', err)
     return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }
 }

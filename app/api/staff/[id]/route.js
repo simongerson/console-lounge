@@ -9,6 +9,13 @@ const supabase = createClient(
 
 export async function PATCH(request, { params }) {
   try {
+    const resolvedParams = await params
+    const id = resolvedParams.id
+
+    if (!id) {
+      return NextResponse.json({ error: 'Missing staff id' }, { status: 400 })
+    }
+
     const { name, pin, role, is_active } = await request.json()
     const updates = {}
 
@@ -24,25 +31,35 @@ export async function PATCH(request, { params }) {
     if (role      !== undefined) updates.role      = role
     if (is_active !== undefined) updates.is_active = is_active
 
-    // Always unlock on any update
     updates.pin_attempts = 0
     updates.locked_until = null
 
     const { error } = await supabase
-      .from('staff').update(updates).eq('id', params.id)
+      .from('staff').update(updates).eq('id', id)
     if (error) throw error
     return NextResponse.json({ success: true })
   } catch (err) {
+    console.error('PATCH /api/staff/[id] error:', err)
     return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }
 }
 
 export async function DELETE(request, { params }) {
   try {
-    await supabase.from('staff')
-      .update({ is_active: false }).eq('id', params.id)
+    const resolvedParams = await params
+    const id = resolvedParams.id
+
+    if (!id) {
+      return NextResponse.json({ error: 'Missing staff id' }, { status: 400 })
+    }
+
+    const { error } = await supabase.from('staff')
+      .update({ is_active: false }).eq('id', id)
+
+    if (error) throw error
     return NextResponse.json({ success: true })
   } catch (err) {
+    console.error('DELETE /api/staff/[id] error:', err)
     return NextResponse.json({ error: 'Server error' }, { status: 500 })
   }
 }

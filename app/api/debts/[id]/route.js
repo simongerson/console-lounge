@@ -8,10 +8,15 @@ const supabase = createClient(
 
 // PATCH /api/debts/[id]
 // Body: { amountPaid, paymentMethod, mpesaRef }
-// Records a payment (partial or full) against a debt.
 export async function PATCH(request, { params }) {
   try {
-    const { id } = params;
+    const resolvedParams = await params
+    const id = resolvedParams.id
+
+    if (!id) {
+      return NextResponse.json({ error: 'Missing debt id' }, { status: 400 });
+    }
+
     const { amountPaid, paymentMethod, mpesaRef } = await request.json();
 
     if (!amountPaid || Number(amountPaid) <= 0) {
@@ -21,21 +26,13 @@ export async function PATCH(request, { params }) {
       );
     }
 
-    if (!paymentMethod || !['cash', 'mpesa'].includes(paymentMethod)) {
+    if (!paymentMethod || !['cash', 'mpesa_stk', 'mpesa'].includes(paymentMethod)) {
       return NextResponse.json(
-        { error: 'Payment method must be cash or mpesa' },
+        { error: 'Payment method must be cash or mpesa_stk' },
         { status: 400 }
       );
     }
 
-    if (paymentMethod === 'mpesa' && !mpesaRef) {
-      return NextResponse.json(
-        { error: 'M-Pesa reference is required' },
-        { status: 400 }
-      );
-    }
-
-    // Fetch current debt to calculate new totals
     const { data: debt, error: fetchError } = await supabase
       .from('debts')
       .select('amount, amount_paid')
@@ -57,7 +54,7 @@ export async function PATCH(request, { params }) {
         amount_paid: newAmountPaid,
         status: newStatus,
         last_payment_method: paymentMethod,
-        mpesa_ref: paymentMethod === 'mpesa' ? mpesaRef.toUpperCase() : null,
+        mpesa_ref: paymentMethod === 'mpesa_stk' && mpesaRef ? mpesaRef.toUpperCase() : null,
       })
       .eq('id', id)
       .select()
@@ -76,10 +73,14 @@ export async function PATCH(request, { params }) {
 }
 
 // DELETE /api/debts/[id]
-// Removes a debt record (e.g. written off / cancelled)
 export async function DELETE(request, { params }) {
   try {
-    const { id } = params;
+    const resolvedParams = await params
+    const id = resolvedParams.id
+
+    if (!id) {
+      return NextResponse.json({ error: 'Missing debt id' }, { status: 400 });
+    }
 
     const { error } = await supabase.from('debts').delete().eq('id', id);
 

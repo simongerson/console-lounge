@@ -35,6 +35,14 @@ export default function SessionsPage() {
     return () => clearInterval(interval)
   }, [])
 
+  // Live per-second tick so active session timers show ticking MM:SS,
+  // independent of the 30s full data refresh above.
+  const [, forceTick] = useState(0)
+  useEffect(() => {
+    const tick = setInterval(() => forceTick(t => t + 1), 1000)
+    return () => clearInterval(tick)
+  }, [])
+
   async function loadData() {
     try {
       const [cRes, rRes] = await Promise.all([
@@ -103,21 +111,53 @@ export default function SessionsPage() {
     setSaving(false)
   }
 
-  async function forceCloseConsole(consoleId, consoleName) {
-    if (!confirm(`Force close ${consoleName}? Use this only if the bay is stuck and won't end normally.`)) return
+  const [forceCloseTarget, setForceCloseTarget] = useState(null)
+  const [forceCloseReason, setForceCloseReason] = useState('')
+  const [forceClosing, setForceClosing] = useState(false)
+  const [forceCloseError, setForceCloseError] = useState('')
+
+  function openForceClose(consoleId, consoleName) {
+    setForceCloseTarget({ id: consoleId, name: consoleName })
+    setForceCloseReason('')
+    setForceCloseError('')
+  }
+
+  async function submitForceClose() {
+    if (!forceCloseReason.trim()) {
+      setForceCloseError('Enter a reason before continuing')
+      return
+    }
+    setForceClosing(true)
+    setForceCloseError('')
     try {
-      await fetch(`/api/consoles/${consoleId}/force-close`, { method: 'POST' })
+      const res = await fetch(`/api/consoles/${forceCloseTarget.id}/force-close`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ staffId, reason: forceCloseReason }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setForceCloseError(data.error || 'Failed to force close')
+        setForceClosing(false)
+        return
+      }
+      setForceCloseTarget(null)
       await loadData()
     } catch {
-      alert('Failed to force close. Try again or check the console directly.')
+      setForceCloseError('Connection error. Try again.')
     }
+    setForceClosing(false)
   }
 
   function timeElapsed(startedAt) {
-    if (!startedAt) return '0m'
-    const diff = Math.floor((Date.now() - new Date(startedAt)) / 60000)
-    if (diff < 60) return `${diff}m`
-    return `${Math.floor(diff / 60)}h ${diff % 60}m`
+    if (!startedAt) return '0:00'
+    const totalSeconds = Math.floor((Date.now() - new Date(startedAt)) / 1000)
+    const h = Math.floor(totalSeconds / 3600)
+    const m = Math.floor((totalSeconds % 3600) / 60)
+    const s = totalSeconds % 60
+    const mm = String(m).padStart(2, '0')
+    const ss = String(s).padStart(2, '0')
+    return h > 0 ? `${h}:${mm}:${ss}` : `${m}:${ss}`
   }
 
   const active = consoles.filter(c => c.status === 'active').length
@@ -262,7 +302,7 @@ export default function SessionsPage() {
                       <button
                         onClick={e => {
                           e.stopPropagation()
-                          forceCloseConsole(c.id, c.name)
+                          openForceClose(c.id, c.name)
                         }}
                         style={{
                           width: '100%', marginTop: '6px',
@@ -477,6 +517,86 @@ export default function SessionsPage() {
                 boxShadow: '0 4px 20px rgba(13,148,136,0.3)',
               }}>
                 {saving ? 'Starting...' : '▶ Start session'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Force close modal — requires a reason, restricted to owner/manager
+          server-side. This isn't just a technical safety valve — it's
+          also a real fraud vector if left unlogged, so every use here
+          gets permanently recorded against the session. */}
+      {forceCloseTarget && (
+        <div style={{
+          position: 'fixed', inset: 0,
+          background: 'rgba(0,0,0,0.7)', zIndex: 60,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          padding: '16px',
+        }}>
+          <div style={{
+            background: '#141414',
+            border: '1px solid rgba(239,68,68,0.3)',
+            borderRadius: '16px', padding: '24px',
+            width: '100%', maxWidth: '380px',
+          }}>
+            <h3 style={{ color: '#fff', fontSize: '16px', fontWeight: 700, margin: '0 0 4px' }}>
+              Force close {forceCloseTarget.name}
+            </h3>
+            <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px', margin: '0 0 16px' }}>
+              Only use this if the bay is genuinely stuck. This cancels the
+              session with no charge — a reason is required and gets logged.
+            </p>
+
+            <label style={{ color: 'rgba(255,255,255,0.45)', fontSize: '11px',
+              fontWeight: 600, textTransform: 'uppercase',
+              letterSpacing: '1px', display: 'block', marginBottom: '6px' }}>
+              Reason
+            </label>
+            <textarea
+              value={forceCloseReason}
+              onChange={e => setForceCloseReason(e.target.value)}
+              placeholder="e.g. Console froze, staff couldn't end session normally"
+              rows={3}
+              style={{
+                width: '100%', boxSizing: 'border-box',
+                background: 'rgba(255,255,255,0.06)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: '10px', padding: '10px 12px',
+                color: '#fff', fontSize: '13px', outline: 'none',
+                resize: 'vertical', marginBottom: '12px',
+              }}
+            />
+
+            {forceCloseError && (
+              <p style={{ color: '#fca5a5', fontSize: '12px', margin: '0 0 12px' }}>
+                {forceCloseError}
+              </p>
+            )}
+
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                onClick={() => setForceCloseTarget(null)}
+                disabled={forceClosing}
+                style={{
+                  flex: 1, padding: '10px', borderRadius: '8px',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  background: 'none', color: 'rgba(255,255,255,0.5)',
+                  fontSize: '13px', cursor: 'pointer',
+                }}>
+                Cancel
+              </button>
+              <button
+                onClick={submitForceClose}
+                disabled={forceClosing}
+                style={{
+                  flex: 1, padding: '10px', borderRadius: '8px',
+                  border: 'none',
+                  background: forceClosing ? 'rgba(239,68,68,0.4)' : '#dc2626',
+                  color: '#fff', fontSize: '13px', fontWeight: 600,
+                  cursor: forceClosing ? 'not-allowed' : 'pointer',
+                }}>
+                {forceClosing ? 'Closing...' : 'Confirm force close'}
               </button>
             </div>
           </div>

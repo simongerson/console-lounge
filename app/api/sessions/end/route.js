@@ -22,30 +22,26 @@ export async function POST(request) {
 
     const now      = new Date()
     const started  = new Date(session.started_at)
-    // Round UP to the next full minute, as decided — e.g. 20 min 10 sec
-    // charges for 21 minutes.
+    // Round UP to the next full minute — 2:00 stays 2 min, 2:05 becomes 3 min.
     const diffMins = Math.ceil((now - started) / 60000)
     const isDebt   = paymentMethod === 'debt'
 
-    // Determine the final charge. Two paths:
-    //   1. Time-based rate + a global per-minute price is set → charge
-    //      is computed live, right now, from real elapsed minutes.
-    //      This is NEVER trusted from the client — it's calculated
-    //      here using the database's own started_at vs. the server's
-    //      own clock, so it can't be manipulated by staff.
-    //   2. Everything else (Per-Game/Both rates, or no per-minute price
-    //      configured) → falls back to the flat amount locked in at
-    //      session start, same as before.
+    // Billing model: the flat rate locked in at session start is always
+    // the GUARANTEED MINIMUM charge — no discount for leaving early.
+    // Per-minute billing only ever ADDS extra charge for time played
+    // past the rate's stated duration (overtime). This is computed
+    // entirely server-side from real timestamps — never trusted from
+    // the client — so the anti-fraud lock from session start stays intact.
     let finalAmount = Number(session.amount)
 
     if (session.rate_id) {
       const { data: rate } = await supabase
         .from('session_rates')
-        .select('pricing_type')
+        .select('pricing_type, duration_minutes')
         .eq('id', session.rate_id)
         .single()
 
-      if (rate?.pricing_type === 'time') {
+      if (rate?.pricing_type === 'time' && Number(rate.duration_minutes) > 0) {
         const { data: billing } = await supabase
           .from('billing_settings')
           .select('price_per_minute')
@@ -53,9 +49,14 @@ export async function POST(request) {
           .single()
 
         const pricePerMinute = Number(billing?.price_per_minute) || 0
-        if (pricePerMinute > 0) {
-          finalAmount = diffMins * pricePerMinute
+        const overtimeMins   = diffMins - Number(rate.duration_minutes)
+
+        if (pricePerMinute > 0 && overtimeMins > 0) {
+          finalAmount = Number(session.amount) + (overtimeMins * pricePerMinute)
         }
+        // If they played within the rate's duration (or exactly at it),
+        // finalAmount stays as the flat session.amount — no discount,
+        // no change from what was locked in at start.
       }
     }
 

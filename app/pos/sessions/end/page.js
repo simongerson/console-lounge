@@ -26,6 +26,7 @@ function EndSessionContent() {
   // own timestamps — so this display can't be used to manipulate anything.
   const [perMinuteActive, setPerMinuteActive] = useState(false)
   const [pricePerMinute, setPricePerMinute]   = useState(0)
+  const [rateDuration, setRateDuration]       = useState(0)
   const [liveEstimate, setLiveEstimate]       = useState(0)
 
   useEffect(() => {
@@ -46,26 +47,43 @@ function EndSessionContent() {
 
         const rate = (ratesData.rates || []).find(r => r.id === session.rate_id)
         const ppm  = Number(billingData.pricePerMinute) || 0
+        const dur  = Number(rate?.duration_minutes) || 0
 
-        if (rate?.pricing_type === 'time' && ppm > 0) {
+        // Only meaningful if the rate has BOTH a real duration set and
+        // a per-minute price configured — matches the server-side check.
+        if (rate?.pricing_type === 'time' && ppm > 0 && dur > 0) {
           setPerMinuteActive(true)
           setPricePerMinute(ppm)
+          setRateDuration(dur)
         }
       } catch {}
     }
     checkPerMinuteBilling()
   }, [session])
 
+  // Model B: flat rate is the guaranteed minimum. Live estimate only
+  // starts climbing once elapsed time passes the rate's duration —
+  // matches exactly what the server computes at actual end time.
   useEffect(() => {
     if (!perMinuteActive || !session?.started_at) return
     const tick = () => {
-      const elapsedMins = Math.ceil((Date.now() - new Date(session.started_at)) / 60000)
-      setLiveEstimate(elapsedMins * pricePerMinute)
+      const elapsedMins  = Math.ceil((Date.now() - new Date(session.started_at)) / 60000)
+      const overtimeMins = elapsedMins - rateDuration
+      const flat         = Number(session.amount) || 0
+      setLiveEstimate(overtimeMins > 0 ? flat + (overtimeMins * pricePerMinute) : flat)
     }
     tick()
     const interval = setInterval(tick, 1000)
     return () => clearInterval(interval)
-  }, [perMinuteActive, session, pricePerMinute])
+  }, [perMinuteActive, session, pricePerMinute, rateDuration])
+
+  // Live per-second tick so the "Time played" timer shows a ticking
+  // MM:SS, independent of anything else re-rendering.
+  const [, forceTick] = useState(0)
+  useEffect(() => {
+    const tick = setInterval(() => forceTick(t => t + 1), 1000)
+    return () => clearInterval(tick)
+  }, [])
 
   async function loadSession() {
     try {
@@ -84,10 +102,14 @@ function EndSessionContent() {
   }
 
   function timeElapsed(startedAt) {
-    if (!startedAt) return '0m'
-    const diff = Math.floor((Date.now() - new Date(startedAt)) / 60000)
-    if (diff < 60) return `${diff} min`
-    return `${Math.floor(diff / 60)}h ${diff % 60}m`
+    if (!startedAt) return '0:00'
+    const totalSeconds = Math.floor((Date.now() - new Date(startedAt)) / 1000)
+    const h = Math.floor(totalSeconds / 3600)
+    const m = Math.floor((totalSeconds % 3600) / 60)
+    const s = totalSeconds % 60
+    const mm = String(m).padStart(2, '0')
+    const ss = String(s).padStart(2, '0')
+    return h > 0 ? `${h}:${mm}:${ss}` : `${m}:${ss}`
   }
 
   function getAmount() {
@@ -260,7 +282,7 @@ function EndSessionContent() {
           {perMinuteActive && (
             <p style={{ color: 'rgba(255,255,255,0.25)', fontSize: '11px',
               textAlign: 'center', margin: '6px 0 0' }}>
-              KES {pricePerMinute}/min · ticking live · capped at nothing, keeps charging if extended
+              KES {pricePerMinute}/min after {rateDuration} min · overtime only, flat rate is the minimum
             </p>
           )}
         </div>

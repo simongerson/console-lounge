@@ -22,17 +22,42 @@ export async function POST(request) {
 
     const now      = new Date()
     const started  = new Date(session.started_at)
+    // Round UP to the next full minute, as decided — e.g. 20 min 10 sec
+    // charges for 21 minutes.
     const diffMins = Math.ceil((now - started) / 60000)
     const isDebt   = paymentMethod === 'debt'
 
-    // IMPORTANT: the amount is NEVER taken from the request body here.
-    // It's locked in permanently at session start (server-validated
-    // there to be > 0) and the UI no longer offers any way to edit it
-    // at end. If this route accepted a client-supplied amount, that
-    // whole anti-fraud lock would be pointless — anyone could bypass
-    // the UI with a direct API call and charge less than what was
-    // actually agreed. Always trust only what's already in the database.
-    const finalAmount = Number(session.amount)
+    // Determine the final charge. Two paths:
+    //   1. Time-based rate + a global per-minute price is set → charge
+    //      is computed live, right now, from real elapsed minutes.
+    //      This is NEVER trusted from the client — it's calculated
+    //      here using the database's own started_at vs. the server's
+    //      own clock, so it can't be manipulated by staff.
+    //   2. Everything else (Per-Game/Both rates, or no per-minute price
+    //      configured) → falls back to the flat amount locked in at
+    //      session start, same as before.
+    let finalAmount = Number(session.amount)
+
+    if (session.rate_id) {
+      const { data: rate } = await supabase
+        .from('session_rates')
+        .select('pricing_type')
+        .eq('id', session.rate_id)
+        .single()
+
+      if (rate?.pricing_type === 'time') {
+        const { data: billing } = await supabase
+          .from('billing_settings')
+          .select('price_per_minute')
+          .eq('id', 1)
+          .single()
+
+        const pricePerMinute = Number(billing?.price_per_minute) || 0
+        if (pricePerMinute > 0) {
+          finalAmount = diffMins * pricePerMinute
+        }
+      }
+    }
 
     if (!finalAmount || finalAmount <= 0) {
       return NextResponse.json(
@@ -46,6 +71,7 @@ export async function POST(request) {
       duration_minutes: diffMins,
       status:           isDebt ? 'debt' : 'completed',
       payment_method:   paymentMethod || session.payment_method,
+      amount:           finalAmount,
     }
 
     if (mpesaRef !== undefined && mpesaRef !== null) {

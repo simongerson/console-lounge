@@ -22,7 +22,34 @@ export default function RatesPage() {
   const [saving, setSaving]     = useState(false)
   const [error, setError]       = useState('')
 
-  useEffect(() => { loadRates() }, [])
+  // Per-minute billing settings (global, applies to all Time-based rates)
+  const [pricePerMinute, setPricePerMinute] = useState('')
+  const [billingSaving, setBillingSaving]   = useState(false)
+  const [billingSaved, setBillingSaved]     = useState(false)
+
+  useEffect(() => { loadRates(); loadBillingSettings() }, [])
+
+  async function loadBillingSettings() {
+    try {
+      const res  = await fetch('/api/billing-settings')
+      const data = await res.json()
+      setPricePerMinute(data.pricePerMinute > 0 ? String(data.pricePerMinute) : '')
+    } catch {}
+  }
+
+  async function saveBillingSettings() {
+    setBillingSaving(true); setBillingSaved(false)
+    try {
+      await fetch('/api/billing-settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pricePerMinute: Number(pricePerMinute) || 0 }),
+      })
+      setBillingSaved(true)
+      setTimeout(() => setBillingSaved(false), 2000)
+    } catch {}
+    setBillingSaving(false)
+  }
 
   async function loadRates() {
     try {
@@ -159,6 +186,39 @@ export default function RatesPage() {
       </div>
 
       <div style={{ ...S.inner, padding: '16px' }}>
+
+        {/* Per-Minute Billing settings */}
+        <div style={{
+          ...S.card, padding: '16px 18px', marginBottom: '16px',
+          border: '1px solid rgba(13,148,136,0.2)',
+        }}>
+          <p style={{ color: '#fff', fontSize: '14px', fontWeight: 700, margin: '0 0 2px' }}>
+            Per-Minute Billing
+          </p>
+          <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: '12px', margin: '0 0 12px' }}>
+            Applies automatically to every Time-based rate. A session's final
+            charge is calculated from actual minutes played (rounded up),
+            not the flat rate shown below — fair for early-enders, and keeps
+            charging if they play longer. Leave at 0 to disable and use flat
+            rates as-is.
+          </p>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <input type="number" value={pricePerMinute}
+              onChange={e => setPricePerMinute(e.target.value)}
+              placeholder="0"
+              style={{ ...S.inp, width: '140px' }}
+              onFocus={e => e.target.style.border = '1px solid rgba(13,148,136,0.7)'}
+              onBlur={e => e.target.style.border = '1px solid rgba(255,255,255,0.1)'}
+            />
+            <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: '13px' }}>
+              KES per minute
+            </span>
+            <button onClick={saveBillingSettings} disabled={billingSaving}
+              style={{ ...S.btn, marginLeft: 'auto', opacity: billingSaving ? 0.5 : 1 }}>
+              {billingSaving ? 'Saving...' : billingSaved ? '✓ Saved' : 'Save'}
+            </button>
+          </div>
+        </div>
 
         {loading ? (
           <p style={{ color: 'rgba(255,255,255,0.3)',

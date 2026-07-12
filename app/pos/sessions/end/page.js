@@ -19,10 +19,53 @@ function EndSessionContent() {
   const [stkStatus, setStkStatus]         = useState('idle')
   const [stkCheckoutId, setStkCheckoutId] = useState(null)
 
+  // Per-minute billing — only relevant for Time-based rates, only when
+  // the owner has set a global per-minute price. This is purely a LIVE
+  // ESTIMATE for display; the real charge is always computed server-side
+  // at the moment End Session is actually clicked, using the database's
+  // own timestamps — so this display can't be used to manipulate anything.
+  const [perMinuteActive, setPerMinuteActive] = useState(false)
+  const [pricePerMinute, setPricePerMinute]   = useState(0)
+  const [liveEstimate, setLiveEstimate]       = useState(0)
+
   useEffect(() => {
     if (!sessionId) { router.push('/pos/sessions'); return }
     loadSession()
   }, [sessionId])
+
+  useEffect(() => {
+    async function checkPerMinuteBilling() {
+      if (!session?.rate_id) return
+      try {
+        const [ratesRes, billingRes] = await Promise.all([
+          fetch('/api/rates'),
+          fetch('/api/billing-settings'),
+        ])
+        const ratesData   = await ratesRes.json()
+        const billingData = await billingRes.json()
+
+        const rate = (ratesData.rates || []).find(r => r.id === session.rate_id)
+        const ppm  = Number(billingData.pricePerMinute) || 0
+
+        if (rate?.pricing_type === 'time' && ppm > 0) {
+          setPerMinuteActive(true)
+          setPricePerMinute(ppm)
+        }
+      } catch {}
+    }
+    checkPerMinuteBilling()
+  }, [session])
+
+  useEffect(() => {
+    if (!perMinuteActive || !session?.started_at) return
+    const tick = () => {
+      const elapsedMins = Math.ceil((Date.now() - new Date(session.started_at)) / 60000)
+      setLiveEstimate(elapsedMins * pricePerMinute)
+    }
+    tick()
+    const interval = setInterval(tick, 1000)
+    return () => clearInterval(interval)
+  }, [perMinuteActive, session, pricePerMinute])
 
   async function loadSession() {
     try {
@@ -48,6 +91,7 @@ function EndSessionContent() {
   }
 
   function getAmount() {
+    if (perMinuteActive) return liveEstimate
     return Number(amountCharged) || 0
   }
 
@@ -200,19 +244,25 @@ function EndSessionContent() {
             Amount to charge (KES)
             <span style={{ color: 'rgba(255,255,255,0.25)', fontWeight: 400,
               textTransform: 'none', marginLeft: '6px' }}>
-              — set at session start
+              {perMinuteActive ? '— live estimate, final on end' : '— set at session start'}
             </span>
           </label>
           <div style={{
             width: '100%', boxSizing: 'border-box',
             background: 'rgba(255,255,255,0.02)',
-            border: '1px solid rgba(255,255,255,0.1)',
+            border: perMinuteActive ? '1px solid rgba(13,148,136,0.4)' : '1px solid rgba(255,255,255,0.1)',
             borderRadius: '12px', padding: '14px',
-            color: 'rgba(13,148,136,0.7)', fontSize: '28px',
+            color: perMinuteActive ? '#0d9488' : 'rgba(13,148,136,0.7)', fontSize: '28px',
             fontWeight: 700, textAlign: 'center',
           }}>
-            {Number(amountCharged || 0).toLocaleString()}
+            {(perMinuteActive ? liveEstimate : Number(amountCharged || 0)).toLocaleString()}
           </div>
+          {perMinuteActive && (
+            <p style={{ color: 'rgba(255,255,255,0.25)', fontSize: '11px',
+              textAlign: 'center', margin: '6px 0 0' }}>
+              KES {pricePerMinute}/min · ticking live · capped at nothing, keeps charging if extended
+            </p>
+          )}
         </div>
 
         <div style={{ marginBottom: '16px' }}>

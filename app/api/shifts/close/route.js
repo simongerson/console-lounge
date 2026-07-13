@@ -24,9 +24,6 @@ export async function POST(request) {
     }
 
     // Block closing the shift while any session under it is still active.
-    // Staff must end (or force-close, if genuinely stuck) every session
-    // first — prevents a shift from closing with an unaccounted-for
-    // open bay, which was leaving the "still active" issue you kept hitting.
     const { data: activeSessions } = await supabase
       .from('game_sessions')
       .select('id, console_id, consoles(name)')
@@ -75,6 +72,22 @@ export async function POST(request) {
       }
     })
 
+    // Approved cash-outs physically left the till for a legitimate
+    // reason (change, supplies, etc.) — subtract them from expected
+    // cash so staff aren't flagged with a fake shortfall for money
+    // that was properly withdrawn and approved. Pending/rejected
+    // cash-outs don't count — only approved ones actually happened.
+    const { data: approvedCashouts } = await supabase
+      .from('cash_outs')
+      .select('amount')
+      .eq('shift_id', shiftId)
+      .eq('status', 'approved')
+
+    const totalCashouts = (approvedCashouts || [])
+      .reduce((sum, c) => sum + Number(c.amount), 0)
+
+    cashExpected -= totalCashouts
+
     const cashDec  = Number(cashDeclared  || 0)
     const mpesaDec = Number(mpesaDeclared || 0)
     const variance = (cashDec + mpesaDec) - (cashExpected + mpesaExpected)
@@ -99,6 +112,7 @@ export async function POST(request) {
         cashExpected, mpesaExpected,
         cashDeclared: cashDec, mpesaDeclared: mpesaDec,
         variance, total: cashExpected + mpesaExpected,
+        cashoutsDeducted: totalCashouts,
       }
     })
   } catch (err) {

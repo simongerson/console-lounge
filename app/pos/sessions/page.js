@@ -613,6 +613,7 @@ export default function SessionsPage() {
         {[
           { label: 'Sales', icon: '🧾', path: '/pos/sales' },
           { label: 'Debts', icon: '🛡️', path: '/pos/debts' },
+          { label: 'Cash Out', icon: '💵', path: '/pos/cashout' },
           { label: 'End Shift', icon: '⏻', path: '/pos/shift-close', danger: true },
         ].map(item => (
           <button key={item.label}

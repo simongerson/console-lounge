@@ -77,7 +77,6 @@ export default function ShiftClosePage() {
               border: '1px solid rgba(13,148,136,0.2)',
               borderRadius: '20px', padding: '24px 20px',
             }}>
-              {/* Cash */}
               <div style={{ marginBottom: '20px' }}>
                 <label style={{ color: 'rgba(255,255,255,0.45)', fontSize: '11px',
                   fontWeight: 600, textTransform: 'uppercase',
@@ -100,7 +99,6 @@ export default function ShiftClosePage() {
                 />
               </div>
 
-              {/* M-Pesa */}
               <div style={{ marginBottom: '24px' }}>
                 <label style={{ color: 'rgba(255,255,255,0.45)', fontSize: '11px',
                   fontWeight: 600, textTransform: 'uppercase',
@@ -155,7 +153,6 @@ export default function ShiftClosePage() {
             </div>
           </>
         ) : (
-          /* Summary after close */
           <>
             <div style={{ textAlign: 'center', marginBottom: '24px' }}>
               <div style={{ fontSize: '48px', marginBottom: '8px' }}>
@@ -177,6 +174,10 @@ export default function ShiftClosePage() {
             }}>
               {[
                 { label: 'Cash expected',    value: summary.cashExpected,   color: '#fff' },
+                ...(summary.cashoutsDeducted > 0 ? [{
+                  label: 'Cash-outs deducted', value: -summary.cashoutsDeducted,
+                  color: '#c9a84c', prefix: '-',
+                }] : []),
                 { label: 'Cash declared',    value: summary.cashDeclared,   color: '#fff' },
                 { label: 'M-Pesa expected',  value: summary.mpesaExpected,  color: '#fff' },
                 { label: 'M-Pesa declared',  value: summary.mpesaDeclared,  color: '#fff' },
@@ -186,17 +187,17 @@ export default function ShiftClosePage() {
                   color: Math.abs(variance) < 50 ? '#10b981' : variance > 0 ? '#0d9488' : '#f87171',
                   prefix: variance > 0 ? '+' : '',
                 },
-              ].map((row, i) => (
+              ].map((row, i, arr) => (
                 <div key={i} style={{
                   display: 'flex', justifyContent: 'space-between',
                   alignItems: 'center', padding: '12px 16px',
-                  borderBottom: i < 5 ? '1px solid rgba(255,255,255,0.05)' : 'none',
+                  borderBottom: i < arr.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none',
                 }}>
                   <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: '13px' }}>
                     {row.label}
                   </span>
                   <span style={{ color: row.color, fontSize: '15px', fontWeight: 700 }}>
-                    {row.prefix}KES {Number(row.value || 0).toLocaleString()}
+                    {row.prefix === '-' ? '-' : row.prefix}KES {Number(Math.abs(row.value) || 0).toLocaleString()}
                   </span>
                 </div>
               ))}

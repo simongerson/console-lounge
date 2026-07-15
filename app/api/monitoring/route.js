@@ -78,6 +78,10 @@ export async function GET() {
         heartbeatFresh,
         ghost,
         ghostMins,
+        // Saved config, for the Monitoring Setup UI — separate from the
+        // live heartbeat's ip above, which reflects what was actually seen.
+        configuredMac: c.mac_address || '',
+        configuredIp: c.static_ip || '',
       }
     })
 

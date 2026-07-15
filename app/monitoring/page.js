@@ -7,6 +7,9 @@ export default function MonitoringPage() {
   const [lastHb, setLastHb]             = useState(null)
   const [loading, setLoading]           = useState(true)
   const [dismissing, setDismissing]     = useState(null)
+  const [configEdits, setConfigEdits]   = useState({}) // { [consoleId]: { mac, ip } }
+  const [savingConfig, setSavingConfig] = useState(null)
+  const [savedConfig, setSavedConfig]   = useState(null)
 
   const loadMonitoring = useCallback(async () => {
     try {
@@ -36,6 +39,36 @@ export default function MonitoringPage() {
       await loadMonitoring()
     } catch {}
     setDismissing(null)
+  }
+
+  function getEdit(c, field) {
+    return configEdits[c.id]?.[field] ?? (field === 'mac' ? c.configuredMac : c.configuredIp)
+  }
+
+  function setEdit(consoleId, field, value) {
+    setConfigEdits(prev => ({
+      ...prev,
+      [consoleId]: { ...prev[consoleId], [field]: value },
+    }))
+  }
+
+  async function saveConfig(c) {
+    setSavingConfig(c.id)
+    try {
+      await fetch('/api/monitoring/config', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          consoleId: c.id,
+          macAddress: getEdit(c, 'mac'),
+          staticIp: getEdit(c, 'ip'),
+        }),
+      })
+      setSavedConfig(c.id)
+      setTimeout(() => setSavedConfig(null), 2000)
+      await loadMonitoring()
+    } catch {}
+    setSavingConfig(null)
   }
 
   const ghosts = consoles.filter(c => c.ghost)
@@ -131,6 +164,60 @@ export default function MonitoringPage() {
           }}>
             Available after signup
           </button>
+        </div>
+
+        {/* Monitoring Setup — per-console MAC/IP, saved here and fetched
+            remotely by the agent on-site. No local editing of the agent
+            itself is needed once it's shipped. */}
+        <div style={{ ...S.card, padding: '16px 20px' }}>
+          <p style={{ fontSize: '14px', fontWeight: 600, color: '#1a1a1a', margin: '0 0 2px' }}>
+            Monitoring Setup
+          </p>
+          <p style={{ fontSize: '12px', color: '#8a8780', margin: '0 0 14px' }}>
+            Enter each console's MAC address (works on any network, no router
+            setup needed) or a static IP (requires a fixed IP assigned in your
+            router). MAC is preferred if you have both.
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {consoles.map(c => (
+              <div key={c.id} style={{
+                display: 'grid', gridTemplateColumns: '80px 1fr 1fr auto',
+                gap: '8px', alignItems: 'center',
+              }}>
+                <span style={{ fontSize: '13px', fontWeight: 600, color: '#1a1a1a' }}>
+                  {c.name}
+                </span>
+                <input
+                  value={getEdit(c, 'mac')}
+                  onChange={e => setEdit(c.id, 'mac', e.target.value)}
+                  placeholder="MAC e.g. a4:83:e7:xx:xx:xx"
+                  style={{
+                    border: '1px solid #e8e4dc', borderRadius: '6px',
+                    padding: '6px 10px', fontSize: '12px', fontFamily: 'monospace',
+                  }}
+                />
+                <input
+                  value={getEdit(c, 'ip')}
+                  onChange={e => setEdit(c.id, 'ip', e.target.value)}
+                  placeholder="Static IP (optional)"
+                  style={{
+                    border: '1px solid #e8e4dc', borderRadius: '6px',
+                    padding: '6px 10px', fontSize: '12px', fontFamily: 'monospace',
+                  }}
+                />
+                <button
+                  onClick={() => saveConfig(c)}
+                  disabled={savingConfig === c.id}
+                  style={{
+                    border: 'none', borderRadius: '6px', padding: '7px 14px',
+                    background: '#0d9488', color: '#fff', fontSize: '12px',
+                    fontWeight: 600, cursor: 'pointer',
+                  }}>
+                  {savingConfig === c.id ? '...' : savedConfig === c.id ? '✓' : 'Save'}
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
 
         {loading ? (

@@ -7,14 +7,20 @@ const supabase = createClient(
 )
 
 // POST /api/monitoring/heartbeat
+// Header: x-agent-key: <shared secret>
 // Body: { consoleId, ipAddress, isOn, currentGame }
 //
-// This is what a future monitoring agent (Windows app scanning your
-// local network) would call every ~15 seconds per console. Nothing
-// currently calls this in production — it's built and ready, but the
-// actual agent software is a separate deliverable.
+// Now requires the same shared secret as /api/monitoring/config —
+// previously this endpoint had no authentication at all, meaning
+// anyone could POST fake heartbeats. Fixed as part of the broader
+// security review.
 export async function POST(request) {
   try {
+    const agentKey = request.headers.get('x-agent-key')
+    if (!agentKey || agentKey !== process.env.AGENT_API_KEY) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const { consoleId, ipAddress, isOn, currentGame } = await request.json()
 
     if (!consoleId) {
@@ -27,9 +33,6 @@ export async function POST(request) {
       .eq('console_id', consoleId)
       .maybeSingle()
 
-    // Track when this console turned on, so ghost duration can be shown.
-    // Resets whenever it transitions off, so the "on_since" always
-    // reflects the current power-on streak, not the console's whole history.
     let onSince = existing?.on_since || null
     if (isOn && !existing?.is_on) {
       onSince = new Date().toISOString()

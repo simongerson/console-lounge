@@ -1,2 +1,0 @@
-ALTER TABLE consoles ADD COLUMN IF NOT EXISTS mac_address TEXT;
-ALTER TABLE consoles ADD COLUMN IF NOT EXISTS static_ip TEXT;

@@ -1,5 +1,0 @@
-{
-  "apiBaseUrl": "https://console-lounge.vercel.app",
-  "agentKey": "PASTE_AGENT_API_KEY_HERE",
-  "pollIntervalSeconds": 15
-}
